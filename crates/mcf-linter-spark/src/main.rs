@@ -1,0 +1,184 @@
+mod lsp;
+
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::ExitCode;
+use std::time::Instant;
+
+use spark_core::config::Config;
+use spark_core::diag::Severity;
+use spark_core::position::LineIndex;
+use spark_core::project::{Options, Project, default_max_depth};
+
+const USAGE: &str = "\
+usage: mcf-linter-spark lsp
+       mcf-linter-spark check [<root>] [--config <settings.json>] [--ignore <pattern>]... [--max-depth <n>] [--format text|github] [--json <file>]
+
+'mcf-linter-spark lsp' runs the language server over stdio.
+
+Lints the data packs under <root> (default: the current directory). The DHP
+settings are read from <root>/.vscode/settings.json unless --config is given.
+A <root>/spyglass.json enables the IMP-Doc rules it sets and the checks of the
+modified Spyglass where it differs from DHP.
+--ignore takes a resource id pattern (e.g. 'animated_java:**'); matching files
+are analysed but not reported. --max-depth sets how many directory levels below
+<root> are searched for data packs (default 2, no limit with a spyglass.json). Exits with 1 when an error or a
+warning is found.";
+
+enum Format {
+    Text,
+    Github,
+}
+
+struct Args {
+    root: PathBuf,
+    config: Option<PathBuf>,
+    ignore: Vec<String>,
+    max_depth: Option<usize>,
+    format: Format,
+    json: Option<PathBuf>,
+}
+
+fn parse_args() -> Result<Args, String> {
+    let mut it = std::env::args().skip(1);
+    match it.next().as_deref() {
+        Some("check") => {}
+        Some("-h" | "--help") | None => return Err(USAGE.to_string()),
+        Some(other) => return Err(format!("unknown command '{other}'\n\n{USAGE}")),
+    }
+    let mut args = Args { root: PathBuf::from("."), config: None, ignore: Vec::new(), max_depth: None, format: Format::Text, json: None };
+    while let Some(a) = it.next() {
+        let mut value = |name: &str| it.next().ok_or_else(|| format!("{name} needs a value"));
+        match a.as_str() {
+            "--config" => args.config = Some(value("--config")?.into()),
+            "--ignore" => args.ignore.push(value("--ignore")?),
+            "--max-depth" => {
+                args.max_depth = Some(value("--max-depth")?.parse().map_err(|_| "--max-depth needs a number".to_string())?)
+            }
+            "--format" => {
+                args.format = match value("--format")?.as_str() {
+                    "text" => Format::Text,
+                    "github" => Format::Github,
+                    other => return Err(format!("unknown format '{other}'")),
+                }
+            }
+            "--json" => args.json = Some(value("--json")?.into()),
+            "-h" | "--help" => return Err(USAGE.to_string()),
+            s if s.starts_with("--") => return Err(format!("unknown option '{s}'")),
+            s => args.root = PathBuf::from(s),
+        }
+    }
+    Ok(args)
+}
+
+fn main() -> ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("lsp") {
+        return match lsp::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("mcf-linter-spark lsp: {message}");
+                ExitCode::from(2)
+            }
+        };
+    }
+    let args = match parse_args() {
+        Ok(a) => a,
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::from(2);
+        }
+    };
+    match run(&args) {
+        Ok(failed) => {
+            if failed {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(message) => {
+            eprintln!("mcf-linter-spark: {message}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run(args: &Args) -> Result<bool, String> {
+    let started = Instant::now();
+    let config = Config::load(&args.root, args.config.as_deref())?;
+    let max_depth = args.max_depth.unwrap_or_else(|| default_max_depth(&config));
+    let project = Project::load(&args.root, config, &Options { ignore: args.ignore.clone(), max_depth })?;
+    if project.files.is_empty() {
+        return Err(format!("no data pack files found under {}", args.root.display()));
+    }
+    let loaded = started.elapsed();
+    let mut results = project.all_diagnostics();
+    results.sort_by(|a, b| project.files[a.0 as usize].rel.cmp(&project.files[b.0 as usize].rel));
+
+    let mut counts = [0usize; 4];
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::new(stdout.lock());
+    let mut json = match &args.json {
+        Some(p) => Some(std::io::BufWriter::new(std::fs::File::create(p).map_err(|e| format!("{}: {e}", p.display()))?)),
+        None => None,
+    };
+    for (fid, diags) in &results {
+        let f = &project.files[*fid as usize];
+        let index = LineIndex::new(&f.text);
+        for d in diags {
+            counts[d.severity as usize] += 1;
+            let (l1, c1) = index.position(&f.text, d.start);
+            let (l2, c2) = index.position(&f.text, d.end);
+            match args.format {
+                Format::Github if matches!(d.severity, Severity::Error | Severity::Warning) => {
+                    let level = if d.severity == Severity::Error { "error" } else { "warning" };
+                    let _ = writeln!(
+                        out,
+                        "::{level} file={},line={},col={},endLine={},endColumn={},title={}::{}",
+                        escape_property(&f.rel),
+                        l1 + 1,
+                        c1 + 1,
+                        l2 + 1,
+                        c2 + 1,
+                        escape_property(d.code),
+                        escape_data(&d.message)
+                    );
+                }
+                _ => {
+                    let _ = writeln!(out, "{}:{}:{} {} {} ({})", f.rel, l1 + 1, c1 + 1, d.severity.as_str(), d.message, d.code);
+                }
+            }
+            if let Some(j) = json.as_mut() {
+                let line = serde_json::json!({
+                    "path": f.rel, "line": l1 + 1, "column": c1 + 1, "endLine": l2 + 1, "endColumn": c2 + 1,
+                    "severity": d.severity.as_str(), "code": d.code, "message": d.message, "source": "mcf-linter-spark",
+                });
+                let _ = writeln!(j, "{line}");
+            }
+        }
+    }
+    let _ = out.flush();
+    if let Some(mut j) = json {
+        j.flush().map_err(|e| e.to_string())?;
+    }
+    let reported = project.files.iter().filter(|f| !f.ignored).count();
+    eprintln!(
+        "{} errors, {} warnings, {} information, {} hints in {} files ({} ms, load {} ms)",
+        counts[0],
+        counts[1],
+        counts[2],
+        counts[3],
+        reported,
+        started.elapsed().as_millis(),
+        loaded.as_millis()
+    );
+    Ok(counts[0] + counts[1] > 0)
+}
+
+fn escape_data(s: &str) -> String {
+    s.replace('%', "%25").replace('\r', "%0D").replace('\n', "%0A")
+}
+
+fn escape_property(s: &str) -> String {
+    escape_data(s).replace(':', "%3A").replace(',', "%2C")
+}

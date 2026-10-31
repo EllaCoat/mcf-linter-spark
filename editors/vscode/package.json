@@ -1,0 +1,74 @@
+{
+  "name": "mcf-linter-spark",
+  "displayName": "mcf-linter-spark",
+  "description": "Fast mcfunction linter with IMP-Doc support for Minecraft Java Edition 1.20.4 data packs",
+  "version": "0.1.0",
+  "publisher": "ellacoat",
+  "license": "MIT",
+  "private": true,
+  "packageManager": "pnpm@12.13.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Linters"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:mcfunction",
+    "workspaceContains:**/pack.mcmeta"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "mcfunction",
+        "extensions": [
+          ".mcfunction"
+        ],
+        "aliases": [
+          "mcfunction"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "mcf-linter-spark",
+      "properties": {
+        "mcfLinterSpark.ignore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Resource id patterns (for example \"animated_java:**\") whose files are analysed but get no diagnostics."
+        },
+        "mcfLinterSpark.maxDepth": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "description": "How many directory levels below the workspace folder are searched for data packs. Unset: 2, or any depth when the folder has a spyglass.json."
+        },
+        "mcfLinterSpark.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to an mcf-linter-spark executable to use instead of the bundled one."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p . --noEmit && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=out/extension.js",
+    "package": "pnpm run build && node scripts/copy-server.mjs && pnpm dlx @vscode/vsce package --no-dependencies --allow-missing-repository"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/vscode": "1.90.0",
+    "@vscode/test-electron": "2.4.1",
+    "esbuild": "0.24.2",
+    "typescript": "5.7.2"
+  }
+}

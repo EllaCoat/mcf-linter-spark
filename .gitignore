@@ -1,0 +1,7 @@
+/target
+node_modules/
+/editors/vscode/out/
+/editors/vscode/bin/
+*.vsix
+/editors/vscode/LICENSE
+/editors/vscode/THIRD_PARTY_NOTICES.md

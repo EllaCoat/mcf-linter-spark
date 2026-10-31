@@ -1,0 +1,14 @@
+[package]
+name = "mcf-linter-spark"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+crossbeam-channel = "0.5"
+spark-core.workspace = true
+lsp-server = "0.7"
+lsp-types = "0.95"
+serde = "1"
+serde_json.workspace = true

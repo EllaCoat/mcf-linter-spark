@@ -1,0 +1,8 @@
+src/**
+scripts/**
+test/**
+node_modules/**
+tsconfig.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+*.vsix
