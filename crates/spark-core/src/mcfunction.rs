@@ -24,6 +24,19 @@ pub struct Decl {
     pub scope: Scope,
 }
 
+/// `#alias <entity|uuid|vector> <name> <value>`: DHP's `alias/<type>` cache entry,
+/// defined at the name with the attached doc's visibility.
+#[derive(Clone, Debug)]
+pub struct Alias {
+    /// `alias/entity`, `alias/uuid` or `alias/vector`.
+    pub kind: Kind,
+    pub name: String,
+    pub value: String,
+    pub start: u32,
+    pub end: u32,
+    pub visibility: SiteVisibility,
+}
+
 /// The `#> <id>` doc comment at the top of a function file whose id matches the file.
 #[derive(Clone, Debug)]
 pub struct FunctionDoc {
@@ -39,6 +52,7 @@ pub struct FileFacts {
     pub diags: Vec<Diagnostic>,
     pub refs: Vec<Ref>,
     pub decls: Vec<Decl>,
+    pub aliases: Vec<Alias>,
     pub function_doc: Option<FunctionDoc>,
     /// `function <id>` written in macro lines, which the game parses only when run.
     pub macro_refs: Vec<Ref>,
@@ -334,6 +348,10 @@ impl Analyzer<'_> {
             self.declaration(rest, base + kw_len as u32, attached);
             return;
         }
+        if let Some(rest) = strip_keyword(content, "#alias") {
+            self.alias(rest, base + (content.len() - rest.len()) as u32, attached);
+            return;
+        }
         if content.starts_with('#') {
             return;
         }
@@ -403,6 +421,36 @@ impl Analyzer<'_> {
             doc: attached.map(|a| a.doc.clone()),
             declared: true,
             scope: attached.map_or(Scope::Default, |a| a.scope),
+        });
+    }
+
+    /// `#alias <entity|uuid|vector> <name> <value>`; `rest` starts after the keyword.
+    /// The name is a Brigadier string and the value the rest of the line. A
+    /// malformed one is a plain comment, as DHP does with a `#` line that fails to parse.
+    fn alias(&mut self, rest: &str, rest_base: u32, attached: Option<&Attached>) {
+        let Some(rest) = rest.strip_prefix(' ') else { return };
+        let Some((ty, after_type)) = rest.split_once(' ') else { return };
+        let kind = match ty {
+            "entity" => "alias/entity",
+            "uuid" => "alias/uuid",
+            "vector" => "alias/vector",
+            _ => return,
+        };
+        let name_base = rest_base + 1 + ty.len() as u32 + 1;
+        let mut r = crate::reader::Reader::new(after_type, name_base);
+        let Ok((name, _)) = r.read_string() else { return };
+        if name.is_empty() {
+            return;
+        }
+        let end = r.offset();
+        let Some(value) = r.rest().strip_prefix(' ').filter(|v| !v.is_empty()) else { return };
+        self.facts.aliases.push(Alias {
+            kind,
+            name,
+            value: value.to_string(),
+            start: name_base,
+            end,
+            visibility: attached.map(|a| a.vis.clone()),
         });
     }
 
@@ -503,6 +551,29 @@ mod tests {
         let f = run("\n#> v\n# @private\n#declare tag A\n#declare tag B\n");
         assert!(f.decls[0].visibility.is_some());
         assert!(f.decls[1].visibility.is_none());
+    }
+
+    #[test]
+    fn alias_lines_are_read_with_the_attached_visibility() {
+        let text = "\n#> aliases\n# @within function a:**\n    #alias vector origin 0 0 0\n#alias entity \"a b\" @e[type=marker,limit=1]\n";
+        let f = run(text);
+        assert_eq!(f.aliases.len(), 2);
+        let a = &f.aliases[0];
+        assert_eq!((a.kind, a.name.as_str(), a.value.as_str()), ("alias/vector", "origin", "0 0 0"));
+        assert_eq!(&text[a.start as usize..a.end as usize], "origin");
+        assert_eq!(a.visibility.as_ref().map(|v| v.len()), Some(1));
+        let b = &f.aliases[1];
+        assert_eq!((b.kind, b.name.as_str(), b.value.as_str()), ("alias/entity", "a b", "@e[type=marker,limit=1]"));
+        assert_eq!(&text[b.start as usize..b.end as usize], "\"a b\"");
+        assert!(b.visibility.is_none());
+    }
+
+    #[test]
+    fn malformed_alias_lines_are_comments() {
+        for line in ["#alias block x y", "#alias vector origin", "#alias vector", "#alias", "#aliases vector x 0 0 0", "#alias vector \"x 0"] {
+            let f = run(&format!("{line}\n"));
+            assert!(f.aliases.is_empty() && f.diags.is_empty(), "{line}");
+        }
     }
 
     #[test]

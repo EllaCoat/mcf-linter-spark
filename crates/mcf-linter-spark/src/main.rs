@@ -12,7 +12,7 @@ use spark_core::project::{Options, Project, default_max_depth};
 
 const USAGE: &str = "\
 usage: mcf-linter-spark lsp
-       mcf-linter-spark check [<root>] [--config <settings.json>] [--ignore <pattern>]... [--max-depth <n>] [--format text|github] [--json <file>]
+       mcf-linter-spark check [<root>] [--config <settings.json>] [--ignore <pattern>]... [--max-depth <n>] [--format text|github] [--json <file>] [--symbols <file>]
 
 'mcf-linter-spark lsp' runs the language server over stdio.
 
@@ -22,8 +22,9 @@ A <root>/spyglass.json enables the IMP-Doc rules it sets and the checks of the
 modified Spyglass where it differs from DHP.
 --ignore takes a resource id pattern (e.g. 'animated_java:**'); matching files
 are analysed but not reported. --max-depth sets how many directory levels below
-<root> are searched for data packs (default 2, no limit with a spyglass.json). Exits with 1 when an error or a
-warning is found.";
+<root> are searched for data packs (default 2, no limit with a spyglass.json).
+--symbols writes the declarations and definitions in the shape of the cache
+DHP writes to .cache/dls.json. Exits with 1 when an error or a warning is found.";
 
 enum Format {
     Text,
@@ -37,6 +38,7 @@ struct Args {
     max_depth: Option<usize>,
     format: Format,
     json: Option<PathBuf>,
+    symbols: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -46,7 +48,8 @@ fn parse_args() -> Result<Args, String> {
         Some("-h" | "--help") | None => return Err(USAGE.to_string()),
         Some(other) => return Err(format!("unknown command '{other}'\n\n{USAGE}")),
     }
-    let mut args = Args { root: PathBuf::from("."), config: None, ignore: Vec::new(), max_depth: None, format: Format::Text, json: None };
+    let mut args =
+        Args { root: PathBuf::from("."), config: None, ignore: Vec::new(), max_depth: None, format: Format::Text, json: None, symbols: None };
     while let Some(a) = it.next() {
         let mut value = |name: &str| it.next().ok_or_else(|| format!("{name} needs a value"));
         match a.as_str() {
@@ -63,6 +66,7 @@ fn parse_args() -> Result<Args, String> {
                 }
             }
             "--json" => args.json = Some(value("--json")?.into()),
+            "--symbols" => args.symbols = Some(value("--symbols")?.into()),
             "-h" | "--help" => return Err(USAGE.to_string()),
             s if s.starts_with("--") => return Err(format!("unknown option '{s}'")),
             s => args.root = PathBuf::from(s),
@@ -160,6 +164,13 @@ fn run(args: &Args) -> Result<bool, String> {
     let _ = out.flush();
     if let Some(mut j) = json {
         j.flush().map_err(|e| e.to_string())?;
+    }
+    if let Some(p) = &args.symbols {
+        let text = serde_json::to_string(&spark_core::symbols::dls_cache(&project)?).map_err(|e| e.to_string())?;
+        if let Some(dir) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::write(p, text).map_err(|e| format!("{}: {e}", p.display()))?;
     }
     let reported = project.files.iter().filter(|f| !f.ignored).count();
     eprintln!(

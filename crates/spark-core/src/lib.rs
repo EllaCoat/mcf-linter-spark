@@ -14,4 +14,5 @@ pub mod mcfunction;
 pub mod position;
 pub mod project;
 pub mod reader;
+pub mod symbols;
 pub mod tree;

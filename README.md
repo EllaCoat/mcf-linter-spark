@@ -64,7 +64,7 @@ VSCode の設定で、次の項目を指定できます。
 `<root>`（指定しなければカレントディレクトリ）と、その 2 階層下までにある、`pack.mcmeta` と `data/` を持つディレクトリをデータパックとして読みます。設定は `<root>/.vscode/settings.json` から読みます。
 
 ```sh
-mcf-linter-spark check [<root>] [--config <settings.json>] [--ignore <pattern>]... [--max-depth <n>] [--format text|github] [--json <file>]
+mcf-linter-spark check [<root>] [--config <settings.json>] [--ignore <pattern>]... [--max-depth <n>] [--format text|github] [--json <file>] [--symbols <file>]
 ```
 
 - `--config`：設定をこのファイルから読みます。`datapack.lint.x` のような平らなキーと、入れ子のキーのどちらも読めます。
@@ -72,6 +72,7 @@ mcf-linter-spark check [<root>] [--config <settings.json>] [--ignore <pattern>].
 - `--max-depth`：データパックを探す深さ。
 - `--format github`：error と warning を GitHub Actions の注釈で出します。
 - `--json`：すべての診断を、1 行に 1 つの JSON で書き出します。
+- `--symbols`：宣言と定義を、DHP が `.cache/dls.json` に書くキャッシュと同じ形の JSON で書き出します。対象は `#declare`・`#define`・`#alias`、function などのファイル、`scoreboard objectives add` などのコマンドです。それぞれの位置と IMP-Doc の公開範囲も書き出します。参照（`ref`）と doc は書き出さないので、datapack-linter のキャッシュから宣言と定義だけを読むスクリプトに渡せます。`uri` は実行したときの絶対パスから作る `file://` の URI です。error や warning で終了コードが 1 になったときも書き出します。
 - 終了コード：error か warning があれば 1、データパックが見つからない・[バニラのデータ](#バニラのデータ)を cache からも取得でも読めないなどで最後まで実行できなければ 2、それ以外は 0 です。
 
 ### GitHub Actions
