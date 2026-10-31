@@ -154,6 +154,20 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn snbt_follows_the_grammar_of_the_release() {
+        assert_eq!(error_in("1.20.4", "data modify storage t: v set value [1, \"a\"]").as_deref(), Some("Can't insert TAG_String into list of TAG_Int"));
+        assert_eq!(error_in("1.21.5", "data modify storage t: v set value [1, \"a\", {}]"), None);
+        for v in ["1.21.4", "1.21.5"] {
+            assert_eq!(error_in(v, "data modify storage t: v set value 0x1Fub"), None, "{v}");
+        }
+        assert_eq!(error_in("1.21.5", "data modify storage t: v set value 007").as_deref(), Some("Decimal numbers can't start with 0"));
+        assert_eq!(error_in("1.21.4", "data modify storage t: v set value 007"), None);
+        assert_eq!(error_in("26.3", "data modify storage t: v set value {id: uuid(\"f81d4fae-7dec-11d0-a765-00a0c91e6bf6\"), on: bool(1)}"), None);
+        assert_eq!(error_in("26.3", "data get storage t: a{b: 0x1}.c"), None);
+        assert_eq!(error_in("26.3", "data merge storage t: [1]").as_deref(), Some("Expected compound tag"));
+    }
+
+    #[test]
     fn every_release_has_no_unknown_parser() {
         for (version, _) in RELEASES {
             let data = crate::data::for_version(version).unwrap();

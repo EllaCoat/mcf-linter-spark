@@ -121,7 +121,7 @@ pub fn slot_source(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
 /// `ResourceOrIdArgument`: an id of the registry, or the element written inline in SNBT.
 pub fn resource_or_id(r: &mut Reader, cx: &mut ArgCtx, registry: &str) -> PResult<()> {
     if !r.peek().is_some_and(super::is_allowed_in_resource_location) {
-        return super::nbt::parse_tag(r).map(|_| ());
+        return super::nbt::parse_tag(r, super::nbt::modern(cx.data)).map(|_| ());
     }
     let (start, id) = read_resource_location(r)?;
     let (s, e) = (r.offset_of(start), r.offset());

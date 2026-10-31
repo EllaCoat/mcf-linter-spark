@@ -1,7 +1,9 @@
-//! SNBT (`TagParser`) and NBT paths (`NbtPathArgument`) of Minecraft 1.20.4.
+//! SNBT (`TagParser`) and NBT paths (`NbtPathArgument`) of Minecraft 1.20.4. From 1.21.5 the
+//! SNBT is read by `snbt.rs` into the same tree.
 
 use super::nbt_check::{self, Category, Target};
-use super::{ArgCtx, ArgValue};
+use super::{ArgCtx, ArgValue, snbt};
+use crate::data::VersionData;
 use crate::reader::{PResult, Reader, is_quote};
 
 /// A parsed SNBT value with its file offsets.
@@ -75,22 +77,27 @@ pub enum NbtPathNode {
     MatchElement(NbtNode),
 }
 
+/// Whether the version reads SNBT with the grammar of 1.21.5 (`snbt.rs`).
+pub fn modern(data: &VersionData) -> bool {
+    data.at_least(&[1, 21, 5])
+}
+
 /// `TagParser.readStruct`. Leading whitespace is skipped.
-pub fn parse_compound(r: &mut Reader) -> PResult<NbtNode> {
-    read_struct(r)
+pub fn parse_compound(r: &mut Reader, modern: bool) -> PResult<NbtNode> {
+    if modern { snbt::parse_compound(r) } else { read_struct(r) }
 }
 
 /// `TagParser.readValue`. Leading whitespace is skipped.
-pub fn parse_tag(r: &mut Reader) -> PResult<NbtNode> {
-    read_value(r)
+pub fn parse_tag(r: &mut Reader, modern: bool) -> PResult<NbtNode> {
+    if modern { snbt::parse_tag(r) } else { read_value(r) }
 }
 
 /// `NbtPathArgument.parse`. Stops at a space or the end of the line.
-pub fn parse_path(r: &mut Reader) -> PResult<Vec<NbtPathNode>> {
+pub fn parse_path(r: &mut Reader, modern: bool) -> PResult<Vec<NbtPathNode>> {
     let mut nodes = Vec::new();
     let mut first = true;
     while r.can_read() && r.peek() != Some(b' ') {
-        nodes.push(parse_path_node(r, first)?);
+        nodes.push(parse_path_node(r, first, modern)?);
         first = false;
         if let Some(c) = r.peek()
             && !matches!(c, b' ' | b'[' | b'{')
@@ -101,18 +108,18 @@ pub fn parse_path(r: &mut Reader) -> PResult<Vec<NbtPathNode>> {
     Ok(nodes)
 }
 
-fn parse_path_node(r: &mut Reader, first: bool) -> PResult<NbtPathNode> {
+fn parse_path_node(r: &mut Reader, first: bool, modern: bool) -> PResult<NbtPathNode> {
     let start = r.pos;
     match r.peek() {
         Some(q) if is_quote(q) => {
             let name = r.read_quoted()?;
-            read_key_node(r, name, Some(q), start)
+            read_key_node(r, name, Some(q), start, modern)
         }
         Some(b'[') => {
             r.pos += 1;
             match r.peek() {
                 Some(b'{') => {
-                    let compound = read_struct(r)?;
+                    let compound = parse_compound(r, modern)?;
                     r.expect(b']')?;
                     Ok(NbtPathNode::MatchElement(compound))
                 }
@@ -131,18 +138,18 @@ fn parse_path_node(r: &mut Reader, first: bool) -> PResult<NbtPathNode> {
             if !first {
                 return Err(r.error("Invalid NBT path element"));
             }
-            Ok(NbtPathNode::MatchRoot(read_struct(r)?))
+            Ok(NbtPathNode::MatchRoot(parse_compound(r, modern)?))
         }
         _ => {
             let name = read_unquoted_name(r)?;
-            read_key_node(r, name, None, start)
+            read_key_node(r, name, None, start, modern)
         }
     }
 }
 
-fn read_key_node(r: &mut Reader, name: String, quote: Option<u8>, start: usize) -> PResult<NbtPathNode> {
+fn read_key_node(r: &mut Reader, name: String, quote: Option<u8>, start: usize, modern: bool) -> PResult<NbtPathNode> {
     let end = r.offset();
-    let filter = if r.peek() == Some(b'{') { Some(read_struct(r)?) } else { None };
+    let filter = if r.peek() == Some(b'{') { Some(parse_compound(r, modern)?) } else { None };
     Ok(NbtPathNode::Key { name, quote, start: r.offset_of(start), end, filter })
 }
 
@@ -161,7 +168,7 @@ fn read_unquoted_name(r: &mut Reader) -> PResult<String> {
 }
 
 /// Java's `Character.isWhitespace`, which `StringReader.skipWhitespace` uses.
-fn is_java_whitespace(c: char) -> bool {
+pub(super) fn is_java_whitespace(c: char) -> bool {
     match c {
         '\u{85}' | '\u{a0}' | '\u{2007}' | '\u{202f}' => false,
         '\u{1c}'..='\u{1f}' => true,
@@ -388,7 +395,7 @@ fn is_decimal(s: &str, dot_required: bool) -> bool {
     }
 }
 
-fn run_check(cx: &mut ArgCtx, node: &NbtNode, target: Option<&Target>) {
+pub(super) fn check(cx: &mut ArgCtx, node: &NbtNode, target: Option<&Target>) {
     let effects = nbt_check::check_value(cx.data, cx.config, node, target);
     cx.effects.extend(effects);
 }
@@ -432,9 +439,9 @@ pub(crate) fn path_target(cx: &ArgCtx) -> Option<Target> {
 
 /// The `minecraft:nbt_compound_tag` argument.
 pub fn compound_argument(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
-    let node = parse_compound(r)?;
+    let node = parse_compound(r, modern(cx.data))?;
     let target = compound_target(cx);
-    run_check(cx, &node, target.as_ref());
+    check(cx, &node, target.as_ref());
     Ok(())
 }
 
@@ -442,13 +449,13 @@ pub fn compound_argument(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
 /// modify <entity|block> ... value` has a schema (see `nbt_check::check_modify_value`);
 /// DHP never types it.
 pub fn tag_argument(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
-    let node = parse_tag(r)?;
+    let node = parse_tag(r, modern(cx.data))?;
     match modify_value_target(cx).filter(|_| cx.config.spyglass) {
         Some((target, element, path)) => {
             let effects = nbt_check::check_modify_value(cx.data, cx.config, &path, &target, element, &node);
             cx.effects.extend(effects);
         }
-        None => run_check(cx, &node, None),
+        None => check(cx, &node, None),
     }
     Ok(())
 }
@@ -473,7 +480,7 @@ fn modify_value_target(cx: &ArgCtx) -> Option<(Target, bool, Vec<NbtPathNode>)> 
 
 /// The `minecraft:nbt_path` argument.
 pub fn path_argument(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
-    let nodes = parse_path(r)?;
+    let nodes = parse_path(r, modern(cx.data))?;
     let target = path_target(cx);
     let effects = nbt_check::check_path(cx.data, cx.config, &nodes, target.as_ref());
     cx.effects.extend(effects);
@@ -486,8 +493,8 @@ pub fn compound_value(r: &mut Reader, cx: &mut ArgCtx, target: Option<&Target>) 
     if r.peek() != Some(b'{') {
         return Err(r.error("Expected '{'"));
     }
-    let node = parse_compound(r)?;
-    run_check(cx, &node, target);
+    let node = parse_compound(r, modern(cx.data))?;
+    check(cx, &node, target);
     Ok(())
 }
 
@@ -496,7 +503,7 @@ mod tests {
     use super::*;
 
     fn tag(src: &str) -> PResult<NbtNode> {
-        parse_tag(&mut Reader::new(src, 0))
+        parse_tag(&mut Reader::new(src, 0), false)
     }
 
     fn value(src: &str) -> NbtValue {
@@ -509,7 +516,7 @@ mod tests {
     }
 
     fn path(src: &str) -> PResult<Vec<NbtPathNode>> {
-        parse_path(&mut Reader::new(src, 0))
+        parse_path(&mut Reader::new(src, 0), false)
     }
 
     fn path_error(src: &str) -> (u32, String) {
@@ -532,7 +539,7 @@ mod tests {
     #[test]
     fn compound_with_offsets() {
         let mut r = Reader::new(r#"{a:1b,"b":'x',c:[1,2]} tail"#, 100);
-        let node = parse_compound(&mut r).unwrap();
+        let node = parse_compound(&mut r, false).unwrap();
         assert_eq!(r.rest(), " tail");
         assert_eq!((node.start, node.end), (100, 122));
         let NbtValue::Compound(entries) = node.value else { panic!() };
@@ -563,7 +570,7 @@ mod tests {
     #[test]
     fn whitespace_and_trailing_commas() {
         let mut r = Reader::new("  { a : 1 , b : [ 1 , 2 , ] , }  x", 0);
-        let node = parse_compound(&mut r).unwrap();
+        let node = parse_compound(&mut r, false).unwrap();
         assert_eq!((node.start, node.end), (2, 31));
         assert_eq!(r.rest(), "  x");
         let NbtValue::Compound(entries) = node.value else { panic!() };
@@ -658,12 +665,12 @@ mod tests {
     #[test]
     fn unquoted_value_stops_at_disallowed_characters() {
         let mut r = Reader::new("foo:bar", 0);
-        let node = parse_tag(&mut r).unwrap();
+        let node = parse_tag(&mut r, false).unwrap();
         assert_eq!(node.value, string("foo", None));
         assert_eq!(r.rest(), ":bar");
 
         let mut r = Reader::new("12 rest", 0);
-        assert_eq!(parse_tag(&mut r).unwrap().value, NbtValue::Int(12));
+        assert_eq!(parse_tag(&mut r, false).unwrap().value, NbtValue::Int(12));
         assert_eq!(r.rest(), " rest");
     }
 
@@ -774,9 +781,9 @@ mod tests {
 
     #[test]
     fn compound_must_start_with_brace() {
-        let e = parse_compound(&mut Reader::new("[1]", 0)).unwrap_err();
+        let e = parse_compound(&mut Reader::new("[1]", 0), false).unwrap_err();
         assert_eq!((e.start, e.message.as_str()), (0, "Expected '{'"));
-        assert!(parse_compound(&mut Reader::new(" {a:1}", 0)).is_ok());
+        assert!(parse_compound(&mut Reader::new(" {a:1}", 0), false).is_ok());
     }
 
     fn key(name: &str, quote: Option<u8>, start: u32, end: u32) -> NbtPathNode {
@@ -833,7 +840,7 @@ mod tests {
     #[test]
     fn path_stops_at_a_space() {
         let mut r = Reader::new("foo.bar rest", 0);
-        assert_eq!(parse_path(&mut r).unwrap().len(), 2);
+        assert_eq!(parse_path(&mut r, false).unwrap().len(), 2);
         assert_eq!(r.rest(), " rest");
         // vanilla accepts a trailing dot
         assert_eq!(path("foo.").unwrap(), vec![key("foo", None, 0, 3)]);

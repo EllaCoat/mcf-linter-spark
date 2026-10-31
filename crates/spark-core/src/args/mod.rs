@@ -7,6 +7,7 @@ mod coords;
 pub mod entity;
 pub mod nbt;
 pub mod nbt_check;
+mod snbt;
 pub mod text;
 
 use crate::command::Effect;
