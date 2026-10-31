@@ -233,6 +233,26 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn slot_names_of_each_release() {
+        let slot = |v: &str, name: &str| error_in(v, &format!("item replace entity @s {name} with stone"));
+        assert_eq!(slot("1.20.4", "horse.armor"), None);
+        assert!(slot("1.20.4", "armor.body").is_some());
+        assert!(slot("1.20.5", "horse.armor").is_some());
+        assert_eq!(slot("1.20.5", "armor.body"), None);
+        assert_eq!(slot("1.20.5", "horse.saddle"), None);
+        assert_eq!(slot("1.20.5", "player.crafting.3"), None);
+        assert_eq!(slot("1.20.5", "contents"), None);
+        assert!(slot("1.21.5", "horse.saddle").is_some());
+        assert_eq!(slot("1.21.5", "saddle"), None);
+        assert_eq!(slot("1.21.5", "contents"), None);
+        assert_eq!(slot("1.21.11", "villager.3"), None);
+        assert!(slot("26.1", "villager.3").is_some());
+        assert_eq!(slot("26.1", "mob.inventory.3"), None);
+        assert_eq!(error_in("26.3", "execute if items entity @s mob.inventory.* minecraft:stone run say hi"), None);
+        assert!(error_in("26.3", "execute if items entity @s villager.* minecraft:stone run say hi").is_some());
+    }
+
+    #[test]
     fn particle_options_are_snbt_from_1_20_5() {
         assert_eq!(error_in("1.20.4", "particle dust 1 0 0 1 ~ ~ ~ 0 0 0 0 1"), None);
         assert_eq!(error_in("1.20.5", "particle dust{color:[1f,0f,0f],scale:1f} ~ ~ ~ 0 0 0 0 1"), None);

@@ -276,9 +276,10 @@ impl<'a> Walker<'a, '_> {
             Parser::Operation => self.values(&["=", "+=", "-=", "*=", "/=", "%=", "<", ">", "><"], partial, pos),
             Parser::ObjectiveCriteria => self.values(args::basic::SIMPLE_CRITERIA, partial, pos),
             Parser::ScoreboardSlot => self.values(&["list", "sidebar", "below_name"], partial, pos),
-            Parser::ItemSlot | Parser::ItemSlots => self.values(ITEM_SLOTS, partial, pos),
+            Parser::ItemSlot => self.slots(partial, pos, false),
+            Parser::ItemSlots => self.slots(partial, pos, true),
             Parser::SlotSource => {
-                self.values(ITEM_SLOTS, partial, pos);
+                self.slots(partial, pos, true);
                 if let Some(k) = self.probe(parser, name, path, values) {
                     self.symbol(k, partial, pos);
                 }
@@ -443,6 +444,20 @@ impl<'a> Walker<'a, '_> {
         }
         let ids: Vec<String> = self.data.registries.get(registry).map(|s| s.iter().cloned().collect()).unwrap_or_default();
         self.ids(&ids, partial, pos, short);
+    }
+
+    /// The slot names of the version, the numbered ones by their prefix; with `groups`, the
+    /// groups of slots (`container.*`) too.
+    fn slots(&mut self, partial: &str, pos: usize, groups: bool) {
+        let slots = args::basic::slots(self.data);
+        let mut names: Vec<String> = slots.names.iter().map(|s| s.to_string()).collect();
+        names.extend(slots.numbered.iter().map(|(prefix, _)| prefix.to_string()));
+        if groups {
+            names.extend(slots.numbered.iter().map(|(prefix, _)| format!("{prefix}*")));
+            names.extend(["weapon.*".to_string(), "armor.*".to_string()]);
+        }
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        self.values(&names, partial, pos);
     }
 
     fn particle(&mut self, partial: &str, pos: usize) {
@@ -914,12 +929,6 @@ pub fn collect_storage_paths(text: &str, out: &mut HashMap<String, BTreeSet<Stri
         }
     }
 }
-
-const ITEM_SLOTS: &[&str] = &[
-    "weapon", "weapon.mainhand", "weapon.offhand", "armor.head", "armor.chest", "armor.legs", "armor.feet",
-    "horse.saddle", "horse.armor", "horse.chest", "container.", "hotbar.", "inventory.", "enderchest.", "villager.",
-    "horse.",
-];
 
 #[cfg(test)]
 mod tests {
