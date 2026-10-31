@@ -2,7 +2,8 @@
 
 Minecraft: Java Edition 1.20.4 のデータパックの `.mcfunction` と JSON を検査する linter です。Datapack Helper Plus 3.x（DHP）の lint 設定と [IMP-Doc](https://github.com/SpyglassMC/Spyglass/wiki/IMP-Doc) の公開範囲に沿って診断し、CI 用のコマンドと VSCode 拡張機能（language server）の両方で動きます。
 
-- 対応する Minecraft のバージョンは 1.20.4 と、コマンドが同じ 1.20.3 だけです。設定の `datapack.env.cmdVersion` がほかのバージョンだと、実行できずに終わります。
+- 検査するバージョンは設定の `datapack.env.cmdVersion` で指定します。指定が無ければ `spyglass.json` の `env.gameVersion` を使い、どちらも無ければ 1.20.4 です。
+- 指定できるのは 1.20.3〜26.3 のリリースです。1.20.5 以降への対応は作業中です。コマンドの一覧、registry、データパックのディレクトリ名と JSON の型はそのバージョンのものを使います。item の components や 1.21.5 からの SNBT などの新しい書き方は、まだ 1.20.4 の書き方として読みます。
 
 ## 検査する内容
 
@@ -95,10 +96,10 @@ GitHub Actions でデータパックを検査する設定例です。
 
 ## バニラのデータ
 
-Minecraft のデータは同梱していません。初回の実行で、決まった commit のファイルを `curl` で取得し、ユーザーの cache ディレクトリ（Windows は `%LOCALAPPDATA%`、macOS は `~/Library/Caches`、ほかは `$XDG_CACHE_HOME` か `~/.cache`）の `mcf-linter-spark/<バージョン>-<commit>/` に置きます。
+Minecraft のデータは同梱していません。初回の実行で、決まった commit のファイルを `curl` で取得し、ユーザーの cache ディレクトリ（Windows は `%LOCALAPPDATA%`、macOS は `~/Library/Caches`、ほかは `$XDG_CACHE_HOME` か `~/.cache`）の `mcf-linter-spark/<バージョン>-<commit>/` に置きます。各バージョンの commit は [`version.rs`](crates/spark-core/src/version.rs) にあります。
 
-- コマンドツリー、registry、ブロックステート、バニラのリソースと tag の一覧：[mcmeta](https://github.com/misode/mcmeta) の summary から取得します（約 750 KB、取得元：`https://raw.githubusercontent.com/misode/mcmeta/c85548aae6f200b4cd823bca81528eedfc790de0/<名前>/data.min.json`）。
-- NBT とデータパックの JSON の型：[vanilla-mcdoc](https://github.com/SpyglassMC/vanilla-mcdoc) の `generated` branch の `symbols.json` から取得します（約 2.7 MB、取得元：`https://raw.githubusercontent.com/SpyglassMC/vanilla-mcdoc/5aab1da2ff00955cdb66f0d6c2a1154ef691a015/symbols.json`）。
+- コマンドツリー、registry、ブロックステート、バニラのリソースと tag の一覧：バージョンごとに、[mcmeta](https://github.com/misode/mcmeta) の `<バージョン>-summary` タグの summary から取得します（約 750 KB、1.20.4 の取得元：`https://raw.githubusercontent.com/misode/mcmeta/c85548aae6f200b4cd823bca81528eedfc790de0/<名前>/data.min.json`）。
+- NBT とデータパックの JSON の型：[vanilla-mcdoc](https://github.com/SpyglassMC/vanilla-mcdoc) の `generated` branch の `symbols.json` から取得します（約 2.7 MB、取得元：`https://raw.githubusercontent.com/SpyglassMC/vanilla-mcdoc/5aab1da2ff00955cdb66f0d6c2a1154ef691a015/symbols.json`）。1 つのファイルにすべてのバージョンの型が入っているので、どのバージョンでも同じ commit のファイルを使います。
 - 環境変数 `MCF_LINTER_SPARK_DATA_DIR` で、`<cache ディレクトリ>/mcf-linter-spark` の代わりの置き場を指定できます。CI の cache から戻したディレクトリや、ネットワークの無い環境でファイルを置いたディレクトリに使います。
 - ネットワークの無い環境では、上の URL のファイルを次の名前で置きます。
 

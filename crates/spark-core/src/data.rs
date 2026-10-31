@@ -13,83 +13,37 @@ use serde_json::Value;
 use crate::facts::{Kind, kind};
 use crate::mcdoc::McDoc;
 use crate::tree::CommandTree;
+use crate::version::{RELEASES, release_index};
 
 pub struct VersionData {
     pub version: &'static str,
+    /// `version` as numbers, for `at_least`.
+    release: Vec<u32>,
     pub tree: CommandTree,
-    /// Registry name (`minecraft:block`) to entry ids (`minecraft:stone`).
+    /// Registry name (`minecraft:block`) to entry ids (`minecraft:stone`). Data pack contents
+    /// (`minecraft:loot_table`, `minecraft:worldgen/biome`) list the vanilla data pack's ids.
     pub registries: HashMap<String, HashSet<String>>,
     /// Block id to its properties and their allowed values.
     pub blocks: HashMap<String, Vec<(String, Vec<String>)>>,
-    /// Data pack directory name (`loot_tables`, `worldgen/biome`) to vanilla resource ids.
-    pub resources: HashMap<String, HashSet<String>>,
-    /// Tag directory name (`blocks`, `entity_types`) to vanilla tag ids.
+    /// Tag registry (`block`, `worldgen/biome`) to vanilla tag ids.
     pub tags: HashMap<String, HashSet<String>>,
     pub mcdoc: McDoc,
 }
 
-struct Source {
-    version: &'static str,
-    /// A commit of misode/mcmeta whose tree is the `<version>-summary` tag.
-    mcmeta_commit: &'static str,
-    /// A commit of the `generated` branch of SpyglassMC/vanilla-mcdoc.
-    mcdoc_commit: &'static str,
-}
-
-const V1_20_4: Source = Source {
-    version: "1.20.4",
-    mcmeta_commit: "c85548aae6f200b4cd823bca81528eedfc790de0",
-    mcdoc_commit: "5aab1da2ff00955cdb66f0d6c2a1154ef691a015",
-};
-
-/// Data pack contents that mcmeta lists among the registries, with the directory name they
-/// have in a 1.20.4 data pack.
-const DATA_PACK_KINDS: [(&str, &str); 23] = [
-    ("advancement", "advancements"),
-    ("chat_type", "chat_type"),
-    ("damage_type", "damage_type"),
-    ("dimension_type", "dimension_type"),
-    ("loot_table", "loot_tables"),
-    ("recipe", "recipes"),
-    ("structure", "structures"),
-    ("trim_material", "trim_material"),
-    ("trim_pattern", "trim_pattern"),
-    ("worldgen/biome", "worldgen/biome"),
-    ("worldgen/configured_carver", "worldgen/configured_carver"),
-    ("worldgen/configured_feature", "worldgen/configured_feature"),
-    ("worldgen/density_function", "worldgen/density_function"),
-    ("worldgen/flat_level_generator_preset", "worldgen/flat_level_generator_preset"),
-    ("worldgen/multi_noise_biome_source_parameter_list", "worldgen/multi_noise_biome_source_parameter_list"),
-    ("worldgen/noise", "worldgen/noise"),
-    ("worldgen/noise_settings", "worldgen/noise_settings"),
-    ("worldgen/placed_feature", "worldgen/placed_feature"),
-    ("worldgen/processor_list", "worldgen/processor_list"),
-    ("worldgen/structure", "worldgen/structure"),
-    ("worldgen/structure_set", "worldgen/structure_set"),
-    ("worldgen/template_pool", "worldgen/template_pool"),
-    ("worldgen/world_preset", "worldgen/world_preset"),
-];
-
-/// Tag registries whose 1.20.4 data pack directory is plural (`tags/blocks`).
-const PLURAL_TAG_DIRS: [(&str, &str); 5] = [
-    ("block", "blocks"),
-    ("entity_type", "entity_types"),
-    ("fluid", "fluids"),
-    ("game_event", "game_events"),
-    ("item", "items"),
-];
+/// A commit of the `generated` branch of SpyglassMC/vanilla-mcdoc. One file covers every
+/// version: members carry `since` / `until`.
+const MCDOC_COMMIT: &str = "5aab1da2ff00955cdb66f0d6c2a1154ef691a015";
 
 /// mcmeta keys that are neither registries of the game nor data pack contents.
 const NOT_REGISTRIES: [&str; 7] = ["atlas", "block_definition", "font", "model", "texture", "datapack", "dimension"];
 
-/// Returns the data for a game version, downloading it on first use. 1.20.3 shares the 1.20.4
-/// data: the two versions have the same commands.
+/// Returns the data for a game version, downloading it on first use.
 pub fn for_version(version: &str) -> Result<&'static VersionData, String> {
-    static D1_20_4: OnceLock<VersionData> = OnceLock::new();
-    let (slot, source) = match version {
-        "1.20.3" | "1.20.4" => (&D1_20_4, &V1_20_4),
-        _ => return Err(format!("unsupported game version '{version}'")),
+    static SLOTS: [OnceLock<VersionData>; RELEASES.len()] = [const { OnceLock::new() }; RELEASES.len()];
+    let Some(index) = release_index(version) else {
+        return Err(format!("unsupported game version '{version}' (supported: 1.20.3, {})", RELEASES.map(|(r, _)| r).join(", ")));
     };
+    let slot = &SLOTS[index];
     if let Some(data) = slot.get() {
         return Ok(data);
     }
@@ -99,7 +53,7 @@ pub fn for_version(version: &str) -> Result<&'static VersionData, String> {
     if let Some(data) = slot.get() {
         return Ok(data);
     }
-    let data = load(source)?;
+    let data = load(RELEASES[index])?;
     Ok(slot.get_or_init(|| data))
 }
 
@@ -107,17 +61,16 @@ type RegistryLists = HashMap<String, Vec<String>>;
 /// Block id without namespace to `[properties, default state]`.
 type BlockSummary = HashMap<String, (serde_json::Map<String, Value>, Value)>;
 
-fn load(source: &Source) -> Result<VersionData, String> {
-    let dir = cache_root()?.join(format!("{}-{}", source.version, &source.mcmeta_commit[..12]));
-    let mcmeta = |name: &str| format!("https://raw.githubusercontent.com/misode/mcmeta/{}/{name}/data.min.json", source.mcmeta_commit);
+fn load((version, mcmeta_commit): (&'static str, &str)) -> Result<VersionData, String> {
+    let dir = cache_root()?.join(format!("{version}-{}", &mcmeta_commit[..12]));
+    let mcmeta = |name: &str| format!("https://raw.githubusercontent.com/misode/mcmeta/{mcmeta_commit}/{name}/data.min.json");
     let commands: Value = read_or_fetch(&dir, "commands", &mcmeta("commands"))?;
     let registries: RegistryLists = read_or_fetch(&dir, "registries", &mcmeta("registries"))?;
     let blocks: BlockSummary = read_or_fetch(&dir, "blocks", &mcmeta("blocks"))?;
-    let commit = source.mcdoc_commit;
-    let url = format!("https://raw.githubusercontent.com/SpyglassMC/vanilla-mcdoc/{commit}/symbols.json");
-    let symbols: Value = read_or_fetch(&dir, &format!("vanilla-mcdoc-{}", &commit[..12]), &url)?;
-    let mcdoc = McDoc::from_json(&symbols, source.version)?;
-    from_summaries(source, &commands, &registries, &blocks, mcdoc)
+    let url = format!("https://raw.githubusercontent.com/SpyglassMC/vanilla-mcdoc/{MCDOC_COMMIT}/symbols.json");
+    let symbols: Value = read_or_fetch(&dir, &format!("vanilla-mcdoc-{}", &MCDOC_COMMIT[..12]), &url)?;
+    let mcdoc = McDoc::from_json(&symbols, version)?;
+    from_summaries(version, &commands, &registries, &blocks, mcdoc)
 }
 
 /// `MCF_LINTER_SPARK_DATA_DIR`, or the user's cache directory of the platform.
@@ -180,7 +133,7 @@ fn read_or_fetch<T: DeserializeOwned>(dir: &Path, name: &str, url: &str) -> Resu
 }
 
 fn from_summaries(
-    source: &Source,
+    version: &'static str,
     commands: &Value,
     lists: &RegistryLists,
     block_props: &BlockSummary,
@@ -191,22 +144,17 @@ fn from_summaries(
     };
 
     let mut registry_sets = HashMap::new();
-    let mut resources = HashMap::new();
     let mut tags = HashMap::new();
     for (key, ids) in lists {
         if key.starts_with("experiment/") || NOT_REGISTRIES.contains(&key.as_str()) {
             continue;
         }
-        if let Some(registry) = key.strip_prefix("tag/") {
-            let dir = PLURAL_TAG_DIRS.iter().find(|(r, _)| *r == registry).map_or(registry, |(_, d)| d);
-            tags.insert(dir.to_string(), with_namespace(ids));
-        } else if let Some((_, dir)) = DATA_PACK_KINDS.iter().find(|(k, _)| k == key) {
-            resources.insert(dir.to_string(), with_namespace(ids));
-        } else {
-            registry_sets.insert(format!("minecraft:{key}"), with_namespace(ids));
-        }
+        match key.strip_prefix("tag/") {
+            Some(registry) => tags.insert(registry.to_string(), with_namespace(ids)),
+            None => registry_sets.insert(format!("minecraft:{key}"), with_namespace(ids)),
+        };
     }
-    if let Some(tables) = resources.get_mut("loot_tables") {
+    if let Some(tables) = registry_sets.get_mut("minecraft:loot_table") {
         tables.insert("minecraft:empty".to_string());
     }
 
@@ -237,17 +185,22 @@ fn from_summaries(
     mcdoc.add_block_states(&blocks);
 
     Ok(VersionData {
-        version: source.version,
+        version,
+        release: crate::version::parse(version),
         tree: CommandTree::from_json(commands),
         registries: registry_sets,
         blocks,
-        resources,
         tags,
         mcdoc,
     })
 }
 
 impl VersionData {
+    /// Whether the version is `v` (`[1, 21]`) or later.
+    pub fn at_least(&self, v: &[u32]) -> bool {
+        crate::version::cmp(&self.release, v).is_ge()
+    }
+
     pub fn registry_has(&self, registry: &str, id: &str) -> bool {
         self.registries.get(registry).is_some_and(|s| s.contains(id))
     }
@@ -256,18 +209,18 @@ impl VersionData {
     /// whose references resolve against it.
     pub fn vanilla(&self, k: Kind) -> Option<&HashSet<String>> {
         match k {
-            kind::ADVANCEMENT => self.resources.get("advancements"),
-            kind::LOOT_TABLE => self.resources.get("loot_tables"),
-            kind::RECIPE => self.resources.get("recipes"),
-            kind::STRUCTURE => self.resources.get("structures"),
-            kind::DAMAGE_TYPE => self.resources.get("damage_type"),
-            kind::DIMENSION_TYPE => self.resources.get("dimension_type"),
-            kind::TEMPLATE_POOL => self.resources.get("worldgen/template_pool"),
-            kind::BLOCK_TAG => self.tags.get("blocks"),
-            kind::ITEM_TAG => self.tags.get("items"),
-            kind::ENTITY_TYPE_TAG => self.tags.get("entity_types"),
-            kind::FLUID_TAG => self.tags.get("fluids"),
-            kind::DAMAGE_TYPE_TAG => self.tags.get("damage_type"),
+            kind::ADVANCEMENT
+            | kind::LOOT_TABLE
+            | kind::RECIPE
+            | kind::STRUCTURE
+            | kind::DAMAGE_TYPE
+            | kind::DIMENSION_TYPE
+            | kind::TEMPLATE_POOL
+            | kind::BLOCK_TAG
+            | kind::ITEM_TAG
+            | kind::ENTITY_TYPE_TAG
+            | kind::FLUID_TAG
+            | kind::DAMAGE_TYPE_TAG => self.vanilla_json(k),
             _ => None,
         }
     }
@@ -284,8 +237,8 @@ impl VersionData {
     /// The vanilla ids of a data pack JSON kind other than dimensions.
     pub fn vanilla_json(&self, k: Kind) -> Option<&HashSet<String>> {
         match k.strip_prefix("tag/") {
-            Some(registry) => self.tags.get(PLURAL_TAG_DIRS.iter().find(|(r, _)| *r == registry).map_or(registry, |(_, d)| d)),
-            None => DATA_PACK_KINDS.iter().find(|(r, _)| *r == k).and_then(|(_, dir)| self.resources.get(*dir)),
+            Some(registry) => self.tags.get(registry),
+            None => self.registries.get(&format!("minecraft:{k}")),
         }
     }
 }
@@ -300,11 +253,11 @@ mod tests {
     fn summaries(registries: &str, blocks: &str) -> VersionData {
         let commands = serde_json::json!({ "type": "root", "children": {} });
         let mcdoc = McDoc::from_json(&serde_json::json!({ "mcdoc": {}, "mcdoc/dispatcher": {} }), "1.20.4").unwrap();
-        from_summaries(&V1_20_4, &commands, &serde_json::from_str(registries).unwrap(), &serde_json::from_str(blocks).unwrap(), mcdoc).unwrap()
+        from_summaries("1.20.4", &commands, &serde_json::from_str(registries).unwrap(), &serde_json::from_str(blocks).unwrap(), mcdoc).unwrap()
     }
 
     #[test]
-    fn mcmeta_summaries_become_registries_resources_and_tags() {
+    fn mcmeta_summaries_become_registries_and_tags() {
         let d = summaries(
             r#"{
                 "block": ["stone", "oak_door"],
@@ -320,14 +273,25 @@ mod tests {
         );
         assert!(d.registry_has("minecraft:block", "minecraft:stone"));
         assert!(d.registry_has("minecraft:command_argument_type", "brigadier:bool"));
-        assert!(d.resources["loot_tables"].contains("minecraft:chests/igloo_chest"));
-        assert!(d.resources["worldgen/template_pool"].contains("minecraft:village/plains/houses"));
-        assert!(d.tags["blocks"].contains("minecraft:doors"));
+        assert!(d.vanilla_json_has(kind::LOOT_TABLE, "minecraft:chests/igloo_chest"));
+        assert!(d.vanilla_json_has(kind::TEMPLATE_POOL, "minecraft:village/plains/houses"));
+        assert!(d.vanilla_json_has(kind::BLOCK_TAG, "minecraft:doors"));
         assert!(d.tags["damage_type"].contains("minecraft:is_fire"));
-        assert_eq!(d.registries.len(), 2);
-        assert_eq!(d.resources.len(), 2);
+        assert_eq!(d.registries.len(), 4);
         assert_eq!(d.blocks["minecraft:oak_door"], vec![("open".to_string(), vec!["true".to_string(), "false".to_string()])]);
         assert!(d.blocks["minecraft:stone"].is_empty());
+    }
+
+    #[test]
+    fn every_release_loads_its_own_data() {
+        for (version, _) in RELEASES {
+            let d = for_version(version).unwrap();
+            assert_eq!(d.version, version);
+            assert!(d.registry_has("minecraft:block", "minecraft:stone"), "{version}");
+            assert!(d.tree.node(crate::tree::ROOT).has_children(), "{version}");
+        }
+        assert!(std::ptr::eq(for_version("1.20.3").unwrap(), for_version("1.20.4").unwrap()));
+        assert!(for_version("1.20.2").is_err());
     }
 
     #[test]

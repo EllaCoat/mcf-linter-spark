@@ -135,3 +135,29 @@ impl<'a> Walker<'a> {
         }
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::facts::kind;
+
+    /// Parses `line` as `version` reads it, with the default settings.
+    pub(crate) fn parse_in(version: &str, line: &str) -> CommandResult {
+        parse_command(line, 0, crate::data::for_version(version).unwrap(), &Config::default())
+    }
+
+    #[test]
+    fn data_pack_ids_in_resource_arguments_are_references() {
+        let refs = |version: &str, line: &str| -> Vec<(&str, String)> {
+            let result = parse_in(version, line);
+            assert_eq!(result.error.map(|e| e.message), None, "{version}: {line}");
+            result.effects.into_iter().filter_map(|e| if let Effect::Ref(r) = e { Some((r.kind, r.id)) } else { None }).collect()
+        };
+        for version in ["1.20.4", "26.3"] {
+            assert_eq!(refs(version, "damage @s 1 t:custom"), [(kind::DAMAGE_TYPE, "t:custom".to_string())], "{version}");
+        }
+        assert_eq!(refs("1.21.2", "advancement grant @s only t:a"), [(kind::ADVANCEMENT, "t:a".to_string())]);
+        assert_eq!(refs("1.21.2", "recipe give @s t:r"), [(kind::RECIPE, "t:r".to_string())]);
+        assert_eq!(refs("1.20.4", "locate biome minecraft:plains"), []);
+    }
+}

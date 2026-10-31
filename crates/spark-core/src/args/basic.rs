@@ -326,22 +326,26 @@ pub fn uuid(r: &mut Reader) -> PResult<()> {
     }
 }
 
-/// `minecraft:resource` and friends. Built-in registries are checked here;
-/// data-driven ones (damage types) become references.
+/// `minecraft:resource` and friends. Built-in registries are checked here; ids of data pack
+/// contents become references for the kinds the project resolves (damage types, advancements,
+/// recipes).
 pub fn resource(r: &mut Reader, cx: &mut ArgCtx, registry: &str, allow_tag: bool) -> PResult<()> {
     let start = r.pos;
     let tag = allow_tag && r.try_consume(b'#');
     let (_, id) = read_resource_location(r)?;
     let (s, e) = (r.offset_of(start), r.offset());
+    let short = registry.strip_prefix("minecraft:").unwrap_or(registry);
     if tag {
         if registry == "minecraft:damage_type" {
             cx.reference(kind::DAMAGE_TYPE_TAG, id, s, e);
         }
+    } else if let Some(k) = crate::datajson::file_kind(short) {
+        if matches!(k, kind::DAMAGE_TYPE | kind::ADVANCEMENT | kind::RECIPE) {
+            cx.reference(k, id, s, e);
+        }
     } else if cx.data.registries.contains_key(registry) {
         cx.check_registry(registry, id, s, e);
         cx.values.push(super::ArgValue::Id(crate::facts::full_id(id)));
-    } else if registry == "minecraft:damage_type" {
-        cx.reference(kind::DAMAGE_TYPE, id, s, e);
     }
     Ok(())
 }
