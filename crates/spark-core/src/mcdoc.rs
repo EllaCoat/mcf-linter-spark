@@ -381,6 +381,26 @@ impl McDoc {
             let ty = Ty::Reference("::java::data::util::SoundEventRef".into());
             fields.push(Field::Pair { key: Key::Name("step_sound".into()), ty, optional: false, desc: None });
         }
+        if version::cmp(version, &[26, 3]).is_ge() {
+            let transmuted = match self.types.get("::java::data::recipe::CraftingTransmute") {
+                Some(Ty::Struct(fields)) => fields.iter().find_map(|f| match f {
+                    Field::Pair { key: Key::Name(n), ty, .. } if n == "result" => Some(ty.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            };
+            if let Some(transmuted) = transmuted
+                && let Some(Ty::Struct(fields)) = self.types.get_mut("::java::data::recipe::CraftingSpecialMapExtending")
+            {
+                for f in fields {
+                    if let Field::Pair { key: Key::Name(n), ty, .. } = f
+                        && n == "result"
+                    {
+                        *ty = transmuted.clone();
+                    }
+                }
+            }
+        }
     }
 }
 

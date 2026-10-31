@@ -714,6 +714,15 @@ mod tests {
     }
 
     #[test]
+    fn the_map_extending_recipe_of_26_3_transmutes_its_result() {
+        let recipe = |result: &str| format!(r##"{{"type": "minecraft:crafting_special_mapextending", "map": "#minecraft:extendable_maps", "material": "minecraft:paper", "result": {result}}}"##);
+        let diags = |version: &str, result: &str| run_in(version, "recipe", &recipe(result)).into_iter().filter(|m| !m.starts_with("ref ")).collect::<Vec<_>>();
+        assert!(diags("26.3", "{}").is_empty());
+        assert!(diags("26.3", r#""minecraft:filled_map""#).is_empty());
+        assert_eq!(diags("26.2", "{}"), ["jsonMissingKey Missing key “id”"]);
+    }
+
+    #[test]
     fn values_of_the_wrong_shape_name_what_fits() {
         let messages = run("loot_table", r#"{"pools": [{"rolls": "x", "entries": [{"type": "item", "name": "minecraft:not_an_item"}]}]}"#);
         assert_eq!(messages, ["jsonType Expected a float or an object", "undeclaredSymbol Cannot find item “minecraft:not_an_item”"]);
