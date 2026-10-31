@@ -34,9 +34,14 @@ pub enum Category {
     ComponentPredicate,
     /// The options of a particle (1.20.5), by particle type.
     Particle,
+    /// A text component in SNBT (1.21.5).
+    Text,
+    /// A text style in SNBT (1.21.5).
+    Style,
 }
 
 impl Category {
+    /// The dispatcher of the category's types, or the one type of `Text` and `Style`.
     pub fn registry(self) -> &'static str {
         match self {
             Category::Entity => "minecraft:entity",
@@ -45,6 +50,8 @@ impl Category {
             Category::DataComponent => "minecraft:data_component",
             Category::ComponentPredicate => "minecraft:data_component_predicate",
             Category::Particle => "minecraft:particle",
+            Category::Text => "::java::util::text::Text",
+            Category::Style => "::java::util::text::TextStyle",
         }
     }
 }
@@ -72,6 +79,9 @@ impl Target {
 /// entries merged when the id is not known.
 fn root_type<'d>(doc: &'d McDoc, target: &Target) -> &'d Ty {
     let registry = target.category.registry();
+    if matches!(target.category, Category::Text | Category::Style) {
+        return doc.types.get(registry).unwrap_or(&ANY);
+    }
     match &target.id {
         Some(id) => doc.dispatchers.get(registry).and_then(|m| m.get(strip_minecraft(id)).or_else(|| m.get("%unknown"))).unwrap_or(&ANY),
         None => doc.merged(registry).unwrap_or(&ANY),
@@ -99,7 +109,8 @@ type Stack<'n> = Vec<(&'n NbtNode, Option<&'n str>)>;
 
 /// Checks a parsed tag. `target` is `None` for an NBT without a schema.
 pub fn check_value(data: &VersionData, config: &Config, node: &NbtNode, target: Option<&Target>) -> Vec<Effect> {
-    // A component, a predicate value and particle options may be any tag, not only a compound.
+    // A component, a predicate value, particle options and a text component may be any tag, not
+    // only a compound.
     let decoded = target.is_some_and(|t| !matches!(t.category, Category::Entity | Category::Block | Category::Item));
     let checker = Checker { whole: target.is_some_and(|t| t.whole), decoded, ..Checker::new(data, config) };
     let mut out = Vec::new();
@@ -537,7 +548,8 @@ struct Checker<'a> {
     /// `Target::whole`.
     whole: bool,
     /// The game decodes the tag with a codec when it loads the command (a component, a particle's
-    /// options), so a tag of another shape or without a required key does not load.
+    /// options, a text component in SNBT), so a tag of another shape or without a required key
+    /// does not load.
     decoded: bool,
 }
 

@@ -323,6 +323,10 @@ impl<'a> Walker<'a, '_> {
                     self.symbol(k, partial, pos);
                 }
             }
+            Parser::Component | Parser::Style if args::nbt::modern(self.data) => {
+                let category = if matches!(parser, Parser::Component) { NbtCategory::Text } else { NbtCategory::Style };
+                self.compound(Some(&Target::new(category, None)), partial, pos);
+            }
             Parser::NbtCompoundTag => {
                 let target = self.nbt_target(args::nbt::compound_target, name, path, values);
                 self.compound(target.as_ref(), partial, pos);
@@ -1135,6 +1139,14 @@ mod tests {
         assert!(has_in("26.3", "clear @s ", "*", 9));
         assert!(has_in("26.3", "particle dust{sc", "scale:", 14));
         assert!(has_in("26.3", "particle du", "dust", 9));
+    }
+
+    #[test]
+    fn text_component_keys_from_1_21_5() {
+        assert!(has_in("1.21.5", "tellraw @a {te", "text:", 12));
+        assert!(has_in("26.3", "tellraw @a [\"a\",{text:\"b\",bo", "bold:", 26));
+        assert!(has_in("26.3", "scoreboard objectives modify o numberformat styled {co", "color:", 52));
+        assert!(!has_in("1.21.4", "tellraw @a {te", "text:", 12));
     }
 
     #[test]

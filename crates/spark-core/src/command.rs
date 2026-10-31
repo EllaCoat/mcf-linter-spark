@@ -216,6 +216,23 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn text_components_and_styles_are_snbt_from_1_21_5() {
+        assert_eq!(error_in("1.21.4", "tellraw @a {\"text\":\"hi\"}"), None);
+        assert!(error_in("1.21.4", "tellraw @a {text:\"hi\"}").is_some());
+        assert_eq!(error_in("1.21.4", "scoreboard objectives modify o numberformat styled {\"color\":\"red\"}"), None);
+        let none: Vec<String> = Vec::new();
+        for v in ["1.21.5", "26.3"] {
+            assert_eq!(diagnostics_in(v, "tellraw @a {text:\"hi\",color:\"red\",click_event:{action:\"run_command\",command:\"/say hi\"}}"), none, "{v}");
+            assert_eq!(diagnostics_in(v, "tellraw @a [\"a\",{text:\"b\",bold:true}]"), none, "{v}");
+            assert_eq!(diagnostics_in(v, "tellraw @a \"plain\""), none, "{v}");
+            assert_eq!(diagnostics_in(v, "tellraw @a {\"text\":\"hi\"}"), none, "{v}");
+            assert_eq!(diagnostics_in(v, "scoreboard objectives modify o numberformat styled {color:\"red\",bold:true}"), none, "{v}");
+            assert_eq!(diagnostics_in(v, "tellraw @a {text:\"a\",color:1}"), ["Expected a string tag but got an int tag"], "{v}");
+            assert_eq!(diagnostics_in(v, "tellraw @a {text:\"a\",clickEvent:{}}"), ["Unknown key “clickEvent”"], "{v}");
+        }
+    }
+
+    #[test]
     fn particle_options_are_snbt_from_1_20_5() {
         assert_eq!(error_in("1.20.4", "particle dust 1 0 0 1 ~ ~ ~ 0 0 0 0 1"), None);
         assert_eq!(error_in("1.20.5", "particle dust{color:[1f,0f,0f],scale:1f} ~ ~ ~ 0 0 0 0 1"), None);
