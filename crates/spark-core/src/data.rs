@@ -96,6 +96,20 @@ const REGISTRY_KINDS: &[(Kind, &str, &str)] = &[
     ("worldgen/material_rule", "26.3", ""),
 ];
 
+const STRUCTURES_1_21: &[&str] = &[
+    "ancient_city", "bastion_remnant", "buried_treasure", "desert_pyramid", "end_city", "fortress", "igloo", "jungle_pyramid",
+    "mansion", "mineshaft", "mineshaft_mesa", "monument", "nether_fossil", "ocean_ruin_cold", "ocean_ruin_warm", "pillager_outpost",
+    "ruined_portal", "ruined_portal_desert", "ruined_portal_jungle", "ruined_portal_mountain", "ruined_portal_nether",
+    "ruined_portal_ocean", "ruined_portal_swamp", "shipwreck", "shipwreck_beached", "stronghold", "swamp_hut", "trail_ruins",
+    "trial_chambers", "village_desert", "village_plains", "village_savanna", "village_snowy", "village_taiga",
+];
+
+const STRUCTURE_TAGS_1_21: &[&str] = &[
+    "cats_spawn_as_black", "cats_spawn_in", "dolphin_located", "eye_of_ender_located", "mineshaft", "ocean_ruin",
+    "on_ocean_explorer_maps", "on_treasure_maps", "on_trial_chambers_maps", "on_woodland_explorer_maps", "ruined_portal",
+    "shipwreck", "village",
+];
+
 /// The kinds whose directory took a singular name in 1.21 (`project::RENAMED_DIRS`).
 const RENAMED_KINDS: [Kind; 8] = [
     kind::FUNCTION,
@@ -234,6 +248,11 @@ fn from_summaries(
     }
     if let Some(tables) = registry_sets.get_mut("minecraft:loot_table") {
         tables.insert("minecraft:empty".to_string());
+    }
+    if matches!(version, "1.21" | "1.21.1") {
+        let ids = |names: &[&str]| names.iter().map(|n| format!("minecraft:{n}")).collect::<Vec<_>>();
+        registry_sets.entry("minecraft:worldgen/structure".to_string()).or_default().extend(ids(STRUCTURES_1_21));
+        tags.entry("worldgen/structure".to_string()).or_default().extend(ids(STRUCTURE_TAGS_1_21));
     }
 
     // The summary lists only blocks that have properties.
@@ -374,6 +393,15 @@ mod tests {
         }
         assert!(std::ptr::eq(for_version("1.20.3").unwrap(), for_version("1.20.4").unwrap()));
         assert!(for_version("1.20.2").is_err());
+    }
+
+    #[test]
+    fn vanilla_structures_of_every_release_resolve() {
+        for (version, _) in RELEASES {
+            let d = for_version(version).unwrap();
+            assert!(d.vanilla_json_has("worldgen/structure", "minecraft:village_plains"), "{version}");
+            assert!(d.vanilla_json_has("tag/worldgen/structure", "minecraft:village"), "{version}");
+        }
     }
 
     #[test]
