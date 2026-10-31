@@ -88,7 +88,7 @@ GitHub Actions でデータパックを検査する設定例です。
   with:
     path: ~/.cache/mcf-linter-spark
     key: mcf-linter-spark-data-1.20.4-c85548aae6f2-5aab1da2ff00
-- run: cargo install --git https://github.com/EllaCoat/mcf-linter-spark --tag v0.1.1 --locked mcf-linter-spark
+- run: cargo install --git https://github.com/EllaCoat/mcf-linter-spark --tag v0.2.0 --locked mcf-linter-spark
 - run: mcf-linter-spark check . --ignore 'animated_java:**' --format github
 ```
 
