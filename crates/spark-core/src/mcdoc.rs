@@ -374,6 +374,13 @@ impl McDoc {
                 }
             }
         }
+        if version::cmp(version, &[1, 20, 5]).is_ge()
+            && version::cmp(version, &[1, 21, 2]).is_lt()
+            && let Some(legacy) = self.types.get("::java::util::particle::TranslucentParticle").cloned()
+        {
+            let color = Ty::Union(vec![legacy, Ty::Number { kind: NumKind::Int, range: None }]);
+            self.types.insert("::java::util::particle::TranslucentParticle".into(), color);
+        }
         if version::cmp(version, &[26, 1]).is_ge()
             && let Some(Ty::Struct(fields)) = self.types.get_mut("::java::data::variants::wolf::WolfSounds")
             && !fields.iter().any(|f| matches!(f, Field::Pair { key: Key::Name(n), .. } if n == "step_sound"))

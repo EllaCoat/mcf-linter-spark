@@ -279,6 +279,15 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn entity_effect_particles_take_an_int_color_from_1_20_5() {
+        for v in ["1.20.5", "1.21.1", "1.21.2", "26.3"] {
+            assert_eq!(diagnostics_in(v, "particle entity_effect{color:-1} ~ ~ ~"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "particle entity_effect{color:[1f,0f,0f,1f]} ~ ~ ~"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "particle entity_effect{color:[1.0,0.0,0.0,1.0]} ~ ~ ~").len(), 4, "{v}");
+        }
+    }
+
+    #[test]
     fn snbt_follows_the_grammar_of_the_release() {
         assert_eq!(error_in("1.20.4", "data modify storage t: v set value [1, \"a\"]").as_deref(), Some("Can't insert TAG_String into list of TAG_Int"));
         assert_eq!(error_in("1.21.5", "data modify storage t: v set value [1, \"a\", {}]"), None);
