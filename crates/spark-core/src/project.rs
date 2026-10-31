@@ -657,7 +657,7 @@ impl Project {
             }
             // Since 1.21 data packs define enchantments and the like, which the rule of the
             // registry still governs.
-            _ => match crate::args::registry_rule(&format!("minecraft:{k}")) {
+            _ => match crate::args::registry_rule(&format!("minecraft:{k}")).filter(|_| k != "dimension_type") {
                 // As `ArgCtx::check_registry` treats ids outside `minecraft:`.
                 Some(rule)
                     if !id.starts_with("minecraft:")
@@ -1147,6 +1147,22 @@ mod tests {
             main,
         );
         assert_eq!(reported_26_3, [("unresolved", "t:none".to_string())]);
+    }
+
+    #[test]
+    fn a_missing_dimension_type_is_a_hint_whatever_the_registry_rule() {
+        let root = std::env::temp_dir().join("ai-agent").join("mcf-linter-spark-tests").join("dimension_type");
+        let _ = std::fs::remove_dir_all(&root);
+        let dimension = r#"{"type": "t:missing", "generator": {"type": "minecraft:flat", "settings": {"layers": [], "biome": "minecraft:plains"}}}"#;
+        for (rel, text) in [("pack.mcmeta", "{}"), ("data/t/dimension/d.json", dimension)] {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let config = Config::from_settings(r#"{"datapack.lint.strictDimensionTypeCheck": ["error", "always"]}"#).unwrap();
+        let p = Project::load(&root, config, &Options { ignore: Vec::new(), max_depth: 0 }).unwrap();
+        let codes: Vec<_> = reported(&p, "data/t/dimension/d.json").into_iter().map(|d| d.0).collect();
+        assert!(codes.contains(&"unresolved") && !codes.contains(&"strictDimensionTypeCheck"), "{codes:?}");
     }
 
     /// A pack written under the temp directory, with the IMP-Doc rules of the
