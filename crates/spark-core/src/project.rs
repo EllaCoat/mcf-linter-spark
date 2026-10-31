@@ -882,7 +882,7 @@ fn classify<'a>(rel_in_ns: &'a str, data: &VersionData) -> Option<(Kind, &'a str
     let mut found = None;
     for (i, _) in rest.match_indices('/') {
         let name = &rest[..i];
-        let k = if tag { data.file_kind(&format!("tag/{name}")) } else { data.file_kind(name) };
+        let k = if tag { data.file_kind(&format!("tag/{name}")) } else { data.file_kind(name).filter(|k| !k.starts_with("tag/")) };
         if let Some(k) = k.filter(|k| !renamed(k)) {
             found = Some((k, &rest[i + 1..]));
         }
@@ -967,6 +967,8 @@ mod tests {
         assert_eq!(classify("damage_type/x.json", new), Some((kind::DAMAGE_TYPE, "x")));
         assert_eq!(classify("enchantment/x.json", new), Some(("enchantment", "x")));
         assert_eq!(classify("tags/enchantment/x.json", new), Some(("tag/enchantment", "x")));
+        assert_eq!(classify("tag/enchantment/x.json", new), None);
+        assert_eq!(classify("tag/worldgen/biome/x.json", new), None);
         assert_eq!(classify("worldgen/feature/x.json", new), None);
 
         let latest = crate::data::for_version("26.3").unwrap();
