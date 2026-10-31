@@ -374,6 +374,13 @@ impl McDoc {
                 }
             }
         }
+        if version::cmp(version, &[26, 1]).is_ge()
+            && let Some(Ty::Struct(fields)) = self.types.get_mut("::java::data::variants::wolf::WolfSounds")
+            && !fields.iter().any(|f| matches!(f, Field::Pair { key: Key::Name(n), .. } if n == "step_sound"))
+        {
+            let ty = Ty::Reference("::java::data::util::SoundEventRef".into());
+            fields.push(Field::Pair { key: Key::Name("step_sound".into()), ty, optional: false, desc: None });
+        }
     }
 }
 

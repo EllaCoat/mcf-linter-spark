@@ -703,6 +703,17 @@ mod tests {
     }
 
     #[test]
+    fn wolf_sounds_have_a_step_sound_from_26_1() {
+        let names = ["ambient_sound", "death_sound", "growl_sound", "hurt_sound", "pant_sound", "whine_sound"];
+        let set = |step: &str| format!("{{{}{step}}}", names.iter().map(|n| format!(r#""{n}": "entity.wolf.step""#)).collect::<Vec<_>>().join(", "));
+        let sounds = |step: &str| format!(r#"{{"adult_sounds": {}, "baby_sounds": {}}}"#, set(step), set(step));
+        let step = r#", "step_sound": "entity.wolf.step""#;
+        assert!(run_in("26.1", "wolf_sound_variant", &sounds(step)).is_empty());
+        assert_eq!(run_in("26.1", "wolf_sound_variant", &sounds("")), ["jsonMissingKey Missing key “step_sound”"; 2]);
+        assert_eq!(run_in("1.21.11", "wolf_sound_variant", &set(step)), ["jsonUnknownKey Unknown key “step_sound”"]);
+    }
+
+    #[test]
     fn values_of_the_wrong_shape_name_what_fits() {
         let messages = run("loot_table", r#"{"pools": [{"rolls": "x", "entries": [{"type": "item", "name": "minecraft:not_an_item"}]}]}"#);
         assert_eq!(messages, ["jsonType Expected a float or an object", "undeclaredSymbol Cannot find item “minecraft:not_an_item”"]);
