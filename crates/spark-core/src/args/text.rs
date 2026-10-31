@@ -11,21 +11,29 @@ use super::nbt_check::{Category, Target};
 use super::{ArgCtx, basic, entity, nbt, read_resource_location};
 use crate::diag::{ParseError, Severity};
 use crate::facts::kind;
-use crate::json::{Json, Node, parse_value};
+use crate::json::{Json, Node, parse_value, parse_whole_lenient_value};
 use crate::reader::{PResult, Reader};
 
 pub fn component(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
     if nbt::modern(cx.data) {
         return snbt(r, cx, Category::Text);
     }
-    run(r, cx, "chat component", |ck, node| ck.component(node))
+    run(r, cx, "chat component", parse_value_at_top, |ck, node| ck.component(node))
+}
+
+pub fn lenient_component(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
+    run(r, cx, "chat component", parse_whole_lenient_value, |ck, node| ck.component(node))
+}
+
+fn parse_value_at_top(r: &mut Reader) -> PResult<Node> {
+    parse_value(r, 0)
 }
 
 pub fn style(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
     if nbt::modern(cx.data) {
         return snbt(r, cx, Category::Style);
     }
-    run(r, cx, "style", |ck, node| match &node.json {
+    run(r, cx, "style", parse_value_at_top, |ck, node| match &node.json {
         Json::Object(fields) => ck.style_fields(fields),
         _ => fail(node, "Not a JSON object"),
     })
@@ -37,8 +45,8 @@ fn snbt(r: &mut Reader, cx: &mut ArgCtx, category: Category) -> PResult<()> {
     Ok(())
 }
 
-fn run(r: &mut Reader, cx: &mut ArgCtx, what: &str, check: impl FnOnce(&mut Checker, &Node) -> Check) -> PResult<()> {
-    let node = parse_value(r, 0).map_err(|mut e| {
+fn run(r: &mut Reader, cx: &mut ArgCtx, what: &str, parse: fn(&mut Reader) -> PResult<Node>, check: impl FnOnce(&mut Checker, &Node) -> Check) -> PResult<()> {
+    let node = parse(r).map_err(|mut e| {
         e.message = format!("Invalid {what}: {}", e.message);
         e
     })?;

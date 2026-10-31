@@ -279,6 +279,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn json_text_in_a_component_is_lenient_until_1_21_5() {
+        for v in ["1.20.5", "1.21.4"] {
+            assert_eq!(diagnostics_in(v, "give @s stone[custom_name=\"a\"]"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "give @s stone[lore=[\"'a'\"]]"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "give @s stone[custom_name='{\"text\":\"a\"} b']"), ["Invalid chat component: Did not consume the entire document"], "{v}");
+            for comment in ["// c", "# c", "/* c */"] {
+                assert_eq!(diagnostics_in(v, &format!("give @s stone[custom_name='\"a\" {comment}']")), ["Invalid chat component: Did not consume the entire document"], "{v} {comment}");
+            }
+        }
+        assert!(diagnostics_in("1.20.4", "summon zombie ~ ~ ~ {CustomName:\"a\"}").iter().any(|d| d.starts_with("Invalid chat component: Malformed JSON")));
+    }
+
+    #[test]
     fn entity_effect_particles_take_an_int_color_from_1_20_5() {
         for v in ["1.20.5", "1.21.1", "1.21.2", "26.3"] {
             assert_eq!(diagnostics_in(v, "particle entity_effect{color:-1} ~ ~ ~"), none(), "{v}");

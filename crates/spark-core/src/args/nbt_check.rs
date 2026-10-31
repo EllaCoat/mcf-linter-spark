@@ -1048,6 +1048,7 @@ impl<'a> Checker<'a> {
                 }
                 Ok(())
             }
+            Holds::Text if self.decoded && !super::nbt::modern(self.data) => super::text::lenient_component(&mut r, &mut cx),
             Holds::Text => super::text::component(&mut r, &mut cx),
             Holds::BlockPredicate => super::blockitem::block_state(&mut r, &mut cx, true),
             Holds::Particle => super::blockitem::particle(&mut r, &mut cx),
