@@ -425,10 +425,17 @@ impl<'a> Walker<'a, '_> {
         let short = registry.strip_prefix("minecraft:").unwrap_or(registry);
         if let Some(rest) = partial.strip_prefix('#') {
             if allow_tag {
-                let tags: Vec<String> = self.data.tags.get(short).map(|s| s.iter().cloned().collect()).unwrap_or_default();
+                let mut tags: Vec<String> = self.data.tags.get(short).map(|s| s.iter().cloned().collect()).unwrap_or_default();
+                if let Some(k) = self.data.file_kind(&format!("tag/{short}")) {
+                    tags.extend(self.source.symbols(k));
+                }
                 self.tag_ids(&tags, rest, pos + 1, registry);
             }
             return;
+        }
+        // The contents of a data pack kind include the project's files.
+        if let Some(k) = self.data.file_kind(short) {
+            return self.symbol(k, partial, pos);
         }
         let ids: Vec<String> = self.data.registries.get(registry).map(|s| s.iter().cloned().collect()).unwrap_or_default();
         self.ids(&ids, partial, pos, short);
@@ -864,6 +871,8 @@ mod tests {
                 "enchantment" => vec!["example:sharp".into()],
                 "dialog" => vec!["example:menu".into()],
                 "slot_source" => vec!["example:hands".into()],
+                "worldgen/biome" => vec!["example:glade".into()],
+                "tag/worldgen/biome" => vec!["example:warm".into()],
                 _ => Vec::new(),
             }
         }
@@ -913,6 +922,10 @@ mod tests {
         assert!(has_in("26.3", "dialog show @s example:", "example:menu", 15));
         assert!(has_in("26.3", "execute if items entity @s example:", "example:hands", 27));
         assert!(has_in("26.3", "execute if items entity @s weap", "weapon", 27));
+        assert!(has("locate biome example:", "example:glade", 13));
+        assert!(has("locate biome minecraft:pl", "minecraft:plains", 13));
+        assert!(has("locate biome #example:", "#example:warm", 13));
+        assert!(has("locate biome #minecraft:is_o", "#minecraft:is_ocean", 13));
     }
 
     #[test]
