@@ -112,6 +112,9 @@ fn run(args: &Args) -> Result<bool, String> {
     let config = Config::load(&args.root, args.config.as_deref())?;
     let max_depth = args.max_depth.unwrap_or_else(|| default_max_depth(&config));
     let project = Project::load(&args.root, config, &Options { ignore: args.ignore.clone(), max_depth })?;
+    for notice in &project.notices {
+        eprintln!("mcf-linter-spark: {notice}");
+    }
     if project.files.is_empty() {
         return Err(format!("no data pack files found under {}", args.root.display()));
     }

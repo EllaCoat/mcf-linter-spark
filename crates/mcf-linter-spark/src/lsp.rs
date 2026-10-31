@@ -139,6 +139,10 @@ impl Server {
         let max_depth = self.max_depth.unwrap_or_else(|| default_max_depth(&config));
         match Project::load(&self.root, config, &Options { ignore: self.ignore.clone(), max_depth }) {
             Ok(mut project) => {
+                for notice in &project.notices {
+                    let params = lsp_types::ShowMessageParams { typ: lsp_types::MessageType::WARNING, message: format!("mcf-linter-spark: {notice}") };
+                    let _ = self.sender.send(Message::Notification(Notification::new("window/showMessage".into(), params)));
+                }
                 project.enable_incremental();
                 for (path, text) in &self.open {
                     if let Some(fid) = project.file_id_of(path) {

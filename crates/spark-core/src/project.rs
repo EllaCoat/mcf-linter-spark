@@ -57,6 +57,9 @@ pub struct Project {
     pub data: &'static VersionData,
     /// Files by id. A deleted file keeps its slot with `removed` set.
     pub files: Vec<FileState>,
+    /// What the user should know about how the project was read, for the CLI and the editor
+    /// to show once.
+    pub notices: Vec<String>,
     packs: Vec<PathBuf>,
     default_visibility: DefaultVisibility,
     ignore: Vec<impdoc::Visibility>,
@@ -116,11 +119,13 @@ impl Project {
             })
             .collect();
         let by_path = files.iter().enumerate().map(|(i, f)| (path_key(&f.path), i as FileId)).collect();
+        let notices = if config.version_set() { Vec::new() } else { unread_layout(root, &packs).into_iter().collect() };
         let mut project = Project {
             root: root.to_path_buf(),
             config,
             data,
             files,
+            notices,
             packs,
             default_visibility,
             ignore,
@@ -891,6 +896,20 @@ fn singular_dirs(data: &VersionData) -> bool {
     data.at_least(&[1, 21])
 }
 
+/// A notice for a pack laid out for 1.21 and later when no setting names the version, as the
+/// default 1.20.4 does not read those directories.
+fn unread_layout(root: &Path, packs: &[PathBuf]) -> Option<String> {
+    let dir = packs.iter().find_map(|pack| {
+        let namespaces = std::fs::read_dir(pack.join("data")).ok()?;
+        namespaces.flatten().find_map(|ns| RENAMED_DIRS.iter().map(|(_, single, _, _)| ns.path().join(single)).find(|d| d.is_dir()))
+    })?;
+    let rel = to_slash(dir.strip_prefix(root).unwrap_or(&dir));
+    let rel = rel.trim_end_matches('/');
+    Some(format!(
+        "{rel}/ is laid out for 1.21 and later, but no version is set, so the pack is read as 1.20.4 and the files under it are skipped. Set the version with datapack.env.cmdVersion in .vscode/settings.json or env.gameVersion in spyglass.json."
+    ))
+}
+
 fn collect_files(root: &Path, pack: &Path, data: &VersionData, out: &mut Vec<(PathBuf, String, Kind, String)>) {
     let Ok(namespaces) = std::fs::read_dir(pack.join("data")) else { return };
     for ns in namespaces.flatten() {
@@ -1033,7 +1052,12 @@ mod tests {
         assert_eq!(ids, [(kind::FUNCTION, "t:lib"), (kind::FUNCTION, "t:main"), (kind::FUNCTION_TAG, "t:load")]);
         let unresolved: Vec<_> = reported(&p, "data/t/function/main.mcfunction").into_iter().map(|d| d.1).collect();
         assert_eq!(unresolved, ["t:old"]);
+        assert!(p.notices.is_empty());
 
+        let p = Project::load(&root, Config::default(), &Options { ignore: Vec::new(), max_depth: 0 }).unwrap();
+        assert_eq!(p.files.len(), 1);
+        assert_eq!(p.notices.len(), 1);
+        assert!(p.notices[0].starts_with("data/t/function/ is laid out for 1.21 and later"), "{}", p.notices[0]);
     }
 
     #[test]
