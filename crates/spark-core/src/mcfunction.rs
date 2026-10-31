@@ -165,7 +165,7 @@ pub fn analyze(text: &str, file_id: &str, data: &VersionData, config: &Config) -
                 i = next;
                 continue;
             }
-            let (vis, errors, modifiers) = doc.visibility(file_id, config.spyglass_imp_doc());
+            let (vis, errors, modifiers) = doc.visibility(file_id, config.spyglass_imp_doc(), data);
             for (s, e, m) in errors {
                 a.diag(s, e, Severity::Error, "impDoc", m);
             }
@@ -321,7 +321,7 @@ impl Analyzer<'_> {
         if id.is_empty() || full_id(id) != self.file_id {
             return;
         }
-        let (vis, errors, modifiers) = doc.visibility(self.file_id, self.config.spyglass_imp_doc());
+        let (vis, errors, modifiers) = doc.visibility(self.file_id, self.config.spyglass_imp_doc(), self.data);
         for (s, e, m) in errors {
             self.diag(s, e, Severity::Error, "impDoc", m);
         }
@@ -404,7 +404,7 @@ impl Analyzer<'_> {
         let type_end = rest.find(' ').unwrap_or(rest.len());
         let ty = &rest[..type_end];
         let type_start = rest_base + 1;
-        let Some(kind) = impdoc::declarable_type(ty) else { return };
+        let Some(kind) = impdoc::declarable_type(ty, self.data) else { return };
         let after_type = &rest[type_end..];
         let id_start = type_start + type_end as u32 + 1;
         let id = after_type.strip_prefix(' ').map(|s| &s[..s.find(' ').unwrap_or(s.len())]).unwrap_or("");

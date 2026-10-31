@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use regex::Regex;
 
+use crate::data::VersionData;
+
 /// Types that may follow `@within` (DHP's `FileTypes`).
 pub const FILE_TYPES: &[&str] = &[
     "advancement", "damage_type", "dimension", "dimension_type", "function", "item_modifier", "loot_table",
@@ -25,17 +27,18 @@ pub const FILE_TYPES: &[&str] = &[
 /// Types that `#declare` accepts besides the file types.
 pub const MISC_TYPES: &[&str] = &["bossbar", "entity", "objective", "score_holder", "storage", "tag", "team", "sequence"];
 
-pub fn is_file_type(t: &str) -> bool {
-    FILE_TYPES.contains(&t)
+/// DHP's file types, and the data pack kinds of the version (`enchantment` since 1.21).
+pub fn is_file_type(t: &str, data: &VersionData) -> bool {
+    FILE_TYPES.contains(&t) || data.file_kind(t).is_some()
 }
 
-pub fn declarable_type(t: &str) -> Option<&'static str> {
-    FILE_TYPES.iter().chain(MISC_TYPES).find(|&&k| k == t).copied()
+pub fn declarable_type(t: &str, data: &VersionData) -> Option<&'static str> {
+    FILE_TYPES.iter().chain(MISC_TYPES).find(|&&k| k == t).copied().or_else(|| data.file_kind(t))
 }
 
-/// Whether ids of this type carry a namespace (`minecraft:` is added when omitted).
+/// Whether ids of this declarable type carry a namespace (`minecraft:` is added when omitted).
 pub fn is_namespaced_type(t: &str) -> bool {
-    is_file_type(t) || t == "bossbar" || t == "storage"
+    !MISC_TYPES.contains(&t) || t == "bossbar" || t == "storage"
 }
 
 /// One visibility entry: which caller type and id pattern may see a declaration.
@@ -215,7 +218,7 @@ impl DocComment {
     /// `getVisibility`. Errors are returned as (start, end, message).
     /// With `strip_modifiers`, tokens such as `@readonly` after `@within` are
     /// dropped first, as the modified Spyglass does; they are returned too.
-    pub fn visibility(&self, current_id: &str, strip_modifiers: bool) -> (Vec<Visibility>, Vec<(u32, u32, String)>, Vec<Token>) {
+    pub fn visibility(&self, current_id: &str, strip_modifiers: bool, data: &VersionData) -> (Vec<Visibility>, Vec<(u32, u32, String)>, Vec<Token>) {
         let mut out = Vec::new();
         let mut errors = Vec::new();
         let mut modifiers = Vec::new();
@@ -239,7 +242,7 @@ impl DocComment {
                     2 => out.push(Visibility { kind: "*".into(), pattern: escape_pattern(&a[1].text).into() }),
                     _ => {
                         let t = &a[1].text;
-                        if is_file_type(t) || t == "*" {
+                        if is_file_type(t, data) || t == "*" {
                             out.push(Visibility { kind: t.as_str().into(), pattern: escape_pattern(&a[2].text).into() });
                         } else {
                             errors.push((a[1].start, a[1].end, format!("Expected a file type or '*' but got '{t}'")));

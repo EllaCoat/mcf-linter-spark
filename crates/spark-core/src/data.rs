@@ -28,7 +28,85 @@ pub struct VersionData {
     /// Tag registry (`block`, `worldgen/biome`) to vanilla tag ids.
     pub tags: HashMap<String, HashSet<String>>,
     pub mcdoc: McDoc,
+    /// The data pack kinds the version reads: the file kinds, and `tag/<registry>` for every
+    /// registry.
+    kinds: HashSet<Kind>,
 }
+
+/// Data pack contents that the game reads through its registries, by registry (which is also the
+/// directory under `data/<ns>/`), with the release that started reading them and the one that
+/// stopped ("" for none). From `RegistryDataLoader` and the `since` / `until` of vanilla-mcdoc.
+const REGISTRY_KINDS: &[(Kind, &str, &str)] = &[
+    ("chat_type", "", ""),
+    ("damage_type", "", ""),
+    ("dimension", "", ""),
+    ("dimension_type", "", ""),
+    ("trim_material", "", ""),
+    ("trim_pattern", "", ""),
+    ("worldgen/biome", "", ""),
+    ("worldgen/configured_carver", "", "26.3"),
+    ("worldgen/configured_feature", "", "26.3"),
+    ("worldgen/density_function", "", ""),
+    ("worldgen/flat_level_generator_preset", "", ""),
+    ("worldgen/multi_noise_biome_source_parameter_list", "", ""),
+    ("worldgen/noise", "", ""),
+    ("worldgen/noise_settings", "", ""),
+    ("worldgen/placed_feature", "", ""),
+    ("worldgen/processor_list", "", ""),
+    ("worldgen/structure", "", ""),
+    ("worldgen/structure_set", "", ""),
+    ("worldgen/template_pool", "", ""),
+    ("worldgen/world_preset", "", ""),
+    ("banner_pattern", "1.20.5", ""),
+    ("wolf_variant", "1.20.5", ""),
+    ("enchantment", "1.21", ""),
+    ("enchantment_provider", "1.21", ""),
+    ("jukebox_song", "1.21", ""),
+    ("painting_variant", "1.21", ""),
+    ("instrument", "1.21.2", ""),
+    ("trial_spawner", "1.21.2", ""),
+    ("cat_variant", "1.21.5", ""),
+    ("chicken_variant", "1.21.5", ""),
+    ("cow_variant", "1.21.5", ""),
+    ("frog_variant", "1.21.5", ""),
+    ("pig_variant", "1.21.5", ""),
+    ("wolf_sound_variant", "1.21.5", ""),
+    ("test_environment", "1.21.5", ""),
+    ("test_instance", "1.21.5", ""),
+    ("dialog", "1.21.6", ""),
+    ("timeline", "1.21.11", ""),
+    ("zombie_nautilus_variant", "1.21.11", ""),
+    ("cat_sound_variant", "26.1", ""),
+    ("chicken_sound_variant", "26.1", ""),
+    ("cow_sound_variant", "26.1", ""),
+    ("pig_sound_variant", "26.1", ""),
+    ("trade_set", "26.1", ""),
+    ("villager_trade", "26.1", ""),
+    ("world_clock", "26.1", ""),
+    ("sulfur_cube_archetype", "26.2", ""),
+    ("block_transformer", "26.3", ""),
+    ("context_float_provider", "26.3", ""),
+    ("context_int_provider", "26.3", ""),
+    ("decorated_pot_pattern", "26.3", ""),
+    ("slot_source", "26.3", ""),
+    ("worldgen/block_state_provider", "26.3", ""),
+    ("worldgen/carver", "26.3", ""),
+    ("worldgen/feature", "26.3", ""),
+    ("worldgen/material_condition", "26.3", ""),
+    ("worldgen/material_rule", "26.3", ""),
+];
+
+/// The kinds whose directory took a singular name in 1.21 (`project::RENAMED_DIRS`).
+const RENAMED_KINDS: [Kind; 8] = [
+    kind::FUNCTION,
+    kind::FUNCTION_TAG,
+    kind::ADVANCEMENT,
+    kind::LOOT_TABLE,
+    kind::PREDICATE,
+    kind::RECIPE,
+    kind::ITEM_MODIFIER,
+    kind::STRUCTURE,
+];
 
 /// A commit of the `generated` branch of SpyglassMC/vanilla-mcdoc. One file covers every
 /// version: members carry `since` / `until`.
@@ -184,14 +262,32 @@ fn from_summaries(
     let mut mcdoc = mcdoc;
     mcdoc.add_block_states(&blocks);
 
+    let release = crate::version::parse(version);
+    let reads = |v: &str| v.is_empty() || crate::version::cmp(&release, &crate::version::parse(v)).is_ge();
+    let mut kinds: HashSet<Kind> = RENAMED_KINDS.into_iter().collect();
+    kinds.extend(REGISTRY_KINDS.iter().filter(|(_, since, until)| reads(since) && (until.is_empty() || !reads(until))).map(|(k, _, _)| *k));
+    let tagged: Vec<String> = registry_sets
+        .keys()
+        .map(|r| r.trim_start_matches("minecraft:").to_string())
+        .chain(kinds.iter().filter(|k| !k.starts_with("tag/")).map(|k| k.to_string()))
+        .collect();
+    for registry in tagged {
+        let name = format!("tag/{registry}");
+        if !kinds.contains(name.as_str()) {
+            // Kinds are `&'static str`, and the data of a version lives as long as the process.
+            kinds.insert(Box::leak(name.into_boxed_str()));
+        }
+    }
+
     Ok(VersionData {
         version,
-        release: crate::version::parse(version),
+        release,
         tree: CommandTree::from_json(commands),
         registries: registry_sets,
         blocks,
         tags,
         mcdoc,
+        kinds,
     })
 }
 
@@ -205,24 +301,10 @@ impl VersionData {
         self.registries.get(registry).is_some_and(|s| s.contains(id))
     }
 
-    /// The ids of a resource or tag kind that the vanilla data pack defines, for the kinds
-    /// whose references resolve against it.
-    pub fn vanilla(&self, k: Kind) -> Option<&HashSet<String>> {
-        match k {
-            kind::ADVANCEMENT
-            | kind::LOOT_TABLE
-            | kind::RECIPE
-            | kind::STRUCTURE
-            | kind::DAMAGE_TYPE
-            | kind::DIMENSION_TYPE
-            | kind::TEMPLATE_POOL
-            | kind::BLOCK_TAG
-            | kind::ITEM_TAG
-            | kind::ENTITY_TYPE_TAG
-            | kind::FLUID_TAG
-            | kind::DAMAGE_TYPE_TAG => self.vanilla_json(k),
-            _ => None,
-        }
+    /// The data pack kind named like a registry (`loot_table`, `tag/block`), if the version reads
+    /// files of it.
+    pub fn file_kind(&self, name: &str) -> Option<Kind> {
+        self.kinds.get(name).copied()
     }
 
     /// Whether the vanilla data pack has a JSON resource or tag of this kind (`worldgen/biome`,
@@ -297,7 +379,6 @@ mod tests {
     #[test]
     fn the_empty_loot_table_exists_without_a_file() {
         let d = summaries(r#"{ "block": ["stone"], "loot_table": ["chests/igloo_chest"] }"#, "{}");
-        assert!(d.vanilla(kind::LOOT_TABLE).unwrap().contains("minecraft:empty"));
         assert!(d.vanilla_json_has(kind::LOOT_TABLE, "minecraft:empty"));
     }
 }

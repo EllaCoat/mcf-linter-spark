@@ -17,7 +17,6 @@ use super::registry_rule;
 use crate::command::Effect;
 use crate::config::Config;
 use crate::data::VersionData;
-use crate::datajson::file_kind;
 use crate::diag::{Diagnostic, Severity};
 use crate::facts::{Ref, kind};
 use crate::lint::{expected_quote, follows_convention};
@@ -1006,9 +1005,10 @@ impl<'a> Checker<'a> {
 
         let mut pos = 0;
         let is_tag = value.starts_with('#');
+        let tags_allowed = matches!(attr.tags, Tags::Allowed | Tags::Required);
         if is_tag {
             pos = 1;
-            if !matches!(attr.tags, Tags::Allowed | Tags::Required) {
+            if !tags_allowed {
                 problems.push((0, 1, Severity::Error, "nbtIdentity", "Tags are not allowed here".into()));
             }
         }
@@ -1037,7 +1037,7 @@ impl<'a> Checker<'a> {
             pos += 1;
             paths.push(read_part(&mut pos));
         }
-        let registry = attr.registry.as_deref().filter(|_| !attr.definition && attr.path.is_none());
+        let registry = attr.registry.as_deref().filter(|_| !attr.definition && attr.path.is_none() && (!is_tag || tags_allowed));
         if pos == 0 || (is_tag && pos == 1) {
             let first_char = value.chars().next().map_or(1, char::len_utf8);
             problems.push((0, first_char, Severity::Error, "nbtIdentity", "Expected a namespaced ID but got nothing".into()));
@@ -1045,7 +1045,7 @@ impl<'a> Checker<'a> {
             let raw = format!("{}:{}", namespace.filter(|n| !n.is_empty()).as_deref().unwrap_or("minecraft"), paths.join("/"));
             let (start, end) = span(usize::from(is_tag), pos);
             let tag = is_tag || attr.tags == Tags::Implicit;
-            if let Some(kind) = file_kind(&if tag { format!("tag/{registry}") } else { registry.to_string() }) {
+            if let Some(kind) = self.data.file_kind(&if tag { format!("tag/{registry}") } else { registry.to_string() }) {
                 if !self.data.vanilla_json_has(kind, &raw) {
                     out.push(Effect::Ref(Ref { kind, id: raw, start, end }));
                 }

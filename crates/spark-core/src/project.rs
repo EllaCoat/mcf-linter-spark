@@ -97,7 +97,7 @@ impl Project {
         let packs = discover_packs(root, options.max_depth);
         let mut entries = Vec::new();
         for pack in &packs {
-            collect_files(root, pack, singular_dirs(data), &mut entries);
+            collect_files(root, pack, data, &mut entries);
         }
         let ignore: Vec<impdoc::Visibility> = options
             .ignore
@@ -207,7 +207,7 @@ impl Project {
         let pack = self.packs.iter().find(|p| path.starts_with(p.join("data")))?;
         let rel_in_data = path.strip_prefix(pack.join("data")).ok().map(to_slash)?;
         let (ns, rest) = rel_in_data.split_once('/')?;
-        let (kind, id_path) = classify(rest, singular_dirs(self.data))?;
+        let (kind, id_path) = classify(rest, self.data)?;
         let id = format!("{ns}:{id_path}");
         let rel = path.strip_prefix(&self.root).map(to_slash).unwrap_or_else(|_| to_slash(path));
         let ignored = self.is_ignored(kind, &id);
@@ -593,7 +593,7 @@ impl Project {
         if self.is_visible(caller, r) {
             return None;
         }
-        let (severity, rule) = self.unresolved_severity(r.kind)?;
+        let (severity, rule) = self.unresolved_severity(r.kind, &r.id)?;
         if self.config.spyglass
             && let Some(scope) = self.restriction(r.kind, &r.id)
         {
@@ -629,7 +629,7 @@ impl Project {
     }
 
     /// The severity of an unresolved reference, or `None` when it is not reported.
-    fn unresolved_severity(&self, k: Kind) -> Option<(Severity, Option<&'static str>)> {
+    fn unresolved_severity(&self, k: Kind, id: &str) -> Option<(Severity, Option<&'static str>)> {
         let rule = match k {
             kind::FUNCTION => "strictFunctionCheck",
             kind::FUNCTION_TAG => "strictFunctionTagCheck",
@@ -650,7 +650,19 @@ impl Project {
                 // DHP reports unknown objectives as warnings whatever the setting says.
                 return self.config.rule("strictObjectiveCheck").map(|_| (Severity::Warning, Some("strictObjectiveCheck")));
             }
-            _ => return Some((Severity::Hint, None)),
+            // Since 1.21 data packs define enchantments and the like, which the rule of the
+            // registry still governs.
+            _ => match crate::args::registry_rule(&format!("minecraft:{k}")) {
+                // As `ArgCtx::check_registry` treats ids outside `minecraft:`.
+                Some(rule)
+                    if !id.starts_with("minecraft:")
+                        && self.config.rule(rule).is_some_and(|(_, mode)| mode.as_str() == Some("only-default-namespace")) =>
+                {
+                    return (!self.config.spyglass).then_some((Severity::Hint, Some(rule)));
+                }
+                Some(rule) => rule,
+                None => return Some((Severity::Hint, None)),
+            },
         };
         match self.config.rule(rule) {
             Some((severity, _)) => Some((severity, Some(rule))),
@@ -695,16 +707,13 @@ impl Project {
         if self.data.vanilla_json_has(r.kind, &r.id) || self.index.contains_key(&key) || self.written.contains_key(&key) {
             return None;
         }
-        let (severity, rule) = self.unresolved_severity(r.kind)?;
+        let (severity, rule) = self.unresolved_severity(r.kind, &r.id)?;
         let message = format!("Failed to resolve {} '{}'", r.kind, r.id);
         Some(Diagnostic { start: r.start, end: r.end, severity, code: rule.unwrap_or("unresolved"), message })
     }
 
     fn vanilla_has(&self, k: Kind, id: &str) -> bool {
-        if k == kind::DIMENSION {
-            return crate::data::DIMENSIONS.contains(&id);
-        }
-        self.data.vanilla(k).is_some_and(|s| s.contains(id))
+        self.data.vanilla_json_has(k, id)
     }
 }
 
@@ -831,48 +840,50 @@ pub fn discover_packs(root: &Path, max_depth: usize) -> Vec<PathBuf> {
     packs
 }
 
-/// The kind and the id-relative path of a file under `data/<ns>/`. `singular` is the
-/// directory naming of 1.21 and later (`function/`, `tags/block/`).
-fn classify(rel_in_ns: &str, singular: bool) -> Option<(Kind, &str)> {
-    /// The directory before 1.21, the one since, the kind, and the file extension.
-    const DIRS: &[(&str, &str, Kind, &str)] = &[
-        ("functions/", "function/", kind::FUNCTION, ".mcfunction"),
-        ("tags/functions/", "tags/function/", kind::FUNCTION_TAG, ".json"),
-        ("tags/blocks/", "tags/block/", kind::BLOCK_TAG, ".json"),
-        ("tags/items/", "tags/item/", kind::ITEM_TAG, ".json"),
-        ("tags/entity_types/", "tags/entity_type/", kind::ENTITY_TYPE_TAG, ".json"),
-        ("tags/fluids/", "tags/fluid/", kind::FLUID_TAG, ".json"),
-        ("tags/game_events/", "tags/game_event/", "tag/game_event", ".json"),
-        ("tags/damage_type/", "tags/damage_type/", kind::DAMAGE_TYPE_TAG, ".json"),
-        ("advancements/", "advancement/", kind::ADVANCEMENT, ".json"),
-        ("loot_tables/", "loot_table/", kind::LOOT_TABLE, ".json"),
-        ("predicates/", "predicate/", kind::PREDICATE, ".json"),
-        ("recipes/", "recipe/", kind::RECIPE, ".json"),
-        ("item_modifiers/", "item_modifier/", kind::ITEM_MODIFIER, ".json"),
-        ("structures/", "structure/", kind::STRUCTURE, ".nbt"),
-        ("dimension/", "dimension/", kind::DIMENSION, ".json"),
-        ("dimension_type/", "dimension_type/", kind::DIMENSION_TYPE, ".json"),
-        ("damage_type/", "damage_type/", kind::DAMAGE_TYPE, ".json"),
-    ];
-    for &(plural, single, k, ext) in DIRS {
+/// The directories renamed in 1.21: the name before, the one since, the kind, and the file
+/// extension.
+const RENAMED_DIRS: &[(&str, &str, Kind, &str)] = &[
+    ("functions/", "function/", kind::FUNCTION, ".mcfunction"),
+    ("tags/functions/", "tags/function/", kind::FUNCTION_TAG, ".json"),
+    ("tags/blocks/", "tags/block/", kind::BLOCK_TAG, ".json"),
+    ("tags/items/", "tags/item/", kind::ITEM_TAG, ".json"),
+    ("tags/entity_types/", "tags/entity_type/", kind::ENTITY_TYPE_TAG, ".json"),
+    ("tags/fluids/", "tags/fluid/", kind::FLUID_TAG, ".json"),
+    ("tags/game_events/", "tags/game_event/", "tag/game_event", ".json"),
+    ("advancements/", "advancement/", kind::ADVANCEMENT, ".json"),
+    ("loot_tables/", "loot_table/", kind::LOOT_TABLE, ".json"),
+    ("predicates/", "predicate/", kind::PREDICATE, ".json"),
+    ("recipes/", "recipe/", kind::RECIPE, ".json"),
+    ("item_modifiers/", "item_modifier/", kind::ITEM_MODIFIER, ".json"),
+    ("structures/", "structure/", kind::STRUCTURE, ".nbt"),
+];
+
+/// The kind and the id-relative path of a file under `data/<ns>/`, as the version names the
+/// directories.
+fn classify<'a>(rel_in_ns: &'a str, data: &VersionData) -> Option<(Kind, &'a str)> {
+    let singular = singular_dirs(data);
+    for &(plural, single, k, ext) in RENAMED_DIRS {
         if let Some(rest) = rel_in_ns.strip_prefix(if singular { single } else { plural }) {
             return rest.strip_suffix(ext).map(|p| (k, p));
         }
     }
-    if let Some((dir, k)) = datajson::EXTRA_KINDS.iter().find(|(d, _)| rel_in_ns.starts_with(d)) {
-        return rel_in_ns[dir.len()..].strip_suffix(".json").map(|p| (*k, p));
+    // The other kinds are named by their registry, which may have several parts
+    // (`worldgen/biome`): the longest leading part of the path that names one.
+    let (rest, tag) = match rel_in_ns.strip_prefix("tags/") {
+        Some(rest) => (rest, true),
+        None => (rel_in_ns, false),
+    };
+    let renamed = |k: &Kind| RENAMED_DIRS.iter().any(|(_, _, r, _)| r == k);
+    let mut found = None;
+    for (i, _) in rest.match_indices('/') {
+        let name = &rest[..i];
+        let k = if tag { data.file_kind(&format!("tag/{name}")) } else { data.file_kind(name) };
+        if let Some(k) = k.filter(|k| !renamed(k)) {
+            found = Some((k, &rest[i + 1..]));
+        }
     }
-    if let Some(rest) = rel_in_ns.strip_prefix("tags/worldgen/") {
-        let (sub, file) = rest.split_once('/')?;
-        let k = impdoc::FILE_TYPES.iter().find(|t| t.strip_prefix("tag/worldgen/") == Some(sub))?;
-        return file.strip_suffix(".json").map(|p| (*k, p));
-    }
-    if let Some(rest) = rel_in_ns.strip_prefix("worldgen/") {
-        let (sub, file) = rest.split_once('/')?;
-        let k = impdoc::FILE_TYPES.iter().find(|t| t.strip_prefix("worldgen/") == Some(sub))?;
-        return file.strip_suffix(".json").map(|p| (*k, p));
-    }
-    None
+    let (k, file) = found?;
+    file.strip_suffix(".json").map(|p| (k, p))
 }
 
 /// Whether the version names its data pack directories in the singular (1.21 and later).
@@ -880,9 +891,8 @@ fn singular_dirs(data: &VersionData) -> bool {
     data.at_least(&[1, 21])
 }
 
-fn collect_files(root: &Path, pack: &Path, singular: bool, out: &mut Vec<(PathBuf, String, Kind, String)>) {
-    let data = pack.join("data");
-    let Ok(namespaces) = std::fs::read_dir(&data) else { return };
+fn collect_files(root: &Path, pack: &Path, data: &VersionData, out: &mut Vec<(PathBuf, String, Kind, String)>) {
+    let Ok(namespaces) = std::fs::read_dir(pack.join("data")) else { return };
     for ns in namespaces.flatten() {
         if !ns.path().is_dir() {
             continue;
@@ -900,7 +910,7 @@ fn collect_files(root: &Path, pack: &Path, singular: bool, out: &mut Vec<(PathBu
                     continue;
                 }
                 let Some(rel_in_ns) = p.strip_prefix(&ns_root).ok().map(to_slash) else { continue };
-                let Some((k, id_path)) = classify(&rel_in_ns, singular) else { continue };
+                let Some((k, id_path)) = classify(&rel_in_ns, data) else { continue };
                 let rel = p.strip_prefix(root).map(to_slash).unwrap_or_else(|_| to_slash(&p));
                 out.push((p.clone(), rel, k, format!("{ns_name}:{id_path}")));
             }
@@ -918,16 +928,31 @@ mod tests {
 
     #[test]
     fn classifies_paths() {
-        assert_eq!(classify("functions/a/b.mcfunction", false), Some((kind::FUNCTION, "a/b")));
-        assert_eq!(classify("functions/a/.mcfunction", false), Some((kind::FUNCTION, "a/")));
-        assert_eq!(classify("tags/functions/load.json", false), Some((kind::FUNCTION_TAG, "load")));
-        assert_eq!(classify("worldgen/biome/x.json", false), Some(("worldgen/biome", "x")));
-        assert_eq!(classify("functions/readme.txt", false), None);
-        assert_eq!(classify("function/a/b.mcfunction", false), None);
-        assert_eq!(classify("function/a/b.mcfunction", true), Some((kind::FUNCTION, "a/b")));
-        assert_eq!(classify("tags/block/x.json", true), Some((kind::BLOCK_TAG, "x")));
-        assert_eq!(classify("functions/a/b.mcfunction", true), None);
-        assert_eq!(classify("damage_type/x.json", true), Some((kind::DAMAGE_TYPE, "x")));
+        let old = crate::data::for_version("1.20.4").unwrap();
+        assert_eq!(classify("functions/a/b.mcfunction", old), Some((kind::FUNCTION, "a/b")));
+        assert_eq!(classify("functions/a/.mcfunction", old), Some((kind::FUNCTION, "a/")));
+        assert_eq!(classify("tags/functions/load.json", old), Some((kind::FUNCTION_TAG, "load")));
+        assert_eq!(classify("worldgen/biome/x.json", old), Some(("worldgen/biome", "x")));
+        assert_eq!(classify("worldgen/template_pool/a/b.json", old), Some(("worldgen/template_pool", "a/b")));
+        assert_eq!(classify("tags/worldgen/biome/x.json", old), Some(("tag/worldgen/biome", "x")));
+        assert_eq!(classify("tags/damage_type/x.json", old), Some(("tag/damage_type", "x")));
+        assert_eq!(classify("functions/readme.txt", old), None);
+        assert_eq!(classify("function/a/b.mcfunction", old), None);
+        assert_eq!(classify("tags/block/x.json", old), None);
+        assert_eq!(classify("enchantment/x.json", old), None);
+
+        let new = crate::data::for_version("1.21").unwrap();
+        assert_eq!(classify("function/a/b.mcfunction", new), Some((kind::FUNCTION, "a/b")));
+        assert_eq!(classify("tags/block/x.json", new), Some((kind::BLOCK_TAG, "x")));
+        assert_eq!(classify("functions/a/b.mcfunction", new), None);
+        assert_eq!(classify("damage_type/x.json", new), Some((kind::DAMAGE_TYPE, "x")));
+        assert_eq!(classify("enchantment/x.json", new), Some(("enchantment", "x")));
+        assert_eq!(classify("tags/enchantment/x.json", new), Some(("tag/enchantment", "x")));
+        assert_eq!(classify("worldgen/feature/x.json", new), None);
+
+        let latest = crate::data::for_version("26.3").unwrap();
+        assert_eq!(classify("worldgen/feature/x.json", latest), Some(("worldgen/feature", "x")));
+        assert_eq!(classify("worldgen/configured_feature/x.json", latest), None);
     }
 
     #[test]
@@ -1008,6 +1033,7 @@ mod tests {
         assert_eq!(ids, [(kind::FUNCTION, "t:lib"), (kind::FUNCTION, "t:main"), (kind::FUNCTION_TAG, "t:load")]);
         let unresolved: Vec<_> = reported(&p, "data/t/function/main.mcfunction").into_iter().map(|d| d.1).collect();
         assert_eq!(unresolved, ["t:old"]);
+
     }
 
     #[test]
@@ -1043,6 +1069,58 @@ mod tests {
             let diagnostics: Vec<_> = p.all_diagnostics().into_iter().flat_map(|(_, d)| d).map(|d| d.message).collect();
             assert!(diagnostics.is_empty(), "{version}: {diagnostics:?}");
         }
+    }
+
+    #[test]
+    fn data_pack_registries_of_each_release_resolve_the_packs_own_files() {
+        let check = |version: &str, files: &[(&str, &str)], main: &str| -> Vec<(&'static str, String)> {
+            let root = std::env::temp_dir().join("ai-agent").join("mcf-linter-spark-tests").join(format!("registries-{version}"));
+            let _ = std::fs::remove_dir_all(&root);
+            for (rel, text) in files.iter().chain(&[("pack.mcmeta", "{}"), (main, "")]) {
+                let path = root.join(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                if !path.exists() {
+                    std::fs::write(path, text).unwrap();
+                }
+            }
+            let settings = format!(r#"{{"datapack.env.cmdVersion": "{version}", "datapack.lint.strictEnchantmentCheck": ["error", "always"]}}"#);
+            let p = Project::load(&root, Config::from_settings(&settings).unwrap(), &Options { ignore: Vec::new(), max_depth: 0 }).unwrap();
+            reported(&p, main).into_iter().map(|(code, text)| (code, text.to_string())).collect()
+        };
+        let main_1_20 = "data/t/functions/main.mcfunction";
+        let reported_1_20 = check(
+            "1.20.4",
+            &[
+                (main_1_20, "locate biome t:b\nlocate biome t:none\nenchant @s t:e\n"),
+                ("data/t/worldgen/biome/b.json", "{}"),
+                ("data/t/enchantment/e.json", "{}"),
+            ],
+            main_1_20,
+        );
+        assert_eq!(reported_1_20, [("unresolved", "t:none".to_string()), ("strictEnchantmentCheck", "t:e".to_string())]);
+
+        let main = "data/t/function/main.mcfunction";
+        let reported_1_21 = check(
+            "1.21",
+            &[
+                (main, "enchant @s t:e\nenchant @s t:none\nexecute if biome ~ ~ ~ #t:b run say hi\n"),
+                ("data/t/enchantment/e.json", "{}"),
+                ("data/t/tags/worldgen/biome/b.json", r#"{"values": []}"#),
+            ],
+            main,
+        );
+        assert_eq!(reported_1_21, [("strictEnchantmentCheck", "t:none".to_string())]);
+
+        let reported_26_3 = check(
+            "26.3",
+            &[
+                (main, "place feature t:f\nplace feature t:none\ndialog show @s t:d\ndialog show @s minecraft:server_links\n"),
+                ("data/t/worldgen/feature/f.json", "{}"),
+                ("data/t/dialog/d.json", "{}"),
+            ],
+            main,
+        );
+        assert_eq!(reported_26_3, [("unresolved", "t:none".to_string())]);
     }
 
     /// A pack written under the temp directory, with the IMP-Doc rules of the
