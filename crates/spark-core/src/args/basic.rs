@@ -198,10 +198,11 @@ fn indexed(s: &str, prefix: &str, count: u32) -> bool {
 }
 
 
-/// A message: plain text in which `@p`, `@a`, `@r`, `@s` and `@e` start selectors.
+/// A message: plain text in which `@p`, `@a`, `@r`, `@s`, `@e` and, from 1.21, `@n` start selectors.
 pub fn message(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
     while r.can_read() {
-        if r.peek() == Some(b'@') && matches!(r.peek_at(1), Some(b'p' | b'a' | b'r' | b's' | b'e')) {
+        let nearest = cx.data.at_least(&[1, 21]) && r.peek_at(1) == Some(b'n');
+        if r.peek() == Some(b'@') && (nearest || matches!(r.peek_at(1), Some(b'p' | b'a' | b'r' | b's' | b'e'))) {
             entity::selector(r, cx)?;
         } else {
             r.skip();

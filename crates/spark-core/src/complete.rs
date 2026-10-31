@@ -598,7 +598,11 @@ impl<'a> Walker<'a, '_> {
     fn selector(&mut self, partial: &str, pos: usize, players_only: bool) {
         let Some(open) = partial.find('[') else {
             if partial.is_empty() || partial.starts_with('@') {
-                let types: &[&str] = if players_only { &["@a", "@p", "@r", "@s"] } else { &["@a", "@e", "@p", "@r", "@s"] };
+                let types: &[&str] = match (players_only, self.data.at_least(&[1, 21])) {
+                    (true, _) => &["@a", "@p", "@r", "@s"],
+                    (false, false) => &["@a", "@e", "@p", "@r", "@s"],
+                    (false, true) => &["@a", "@e", "@n", "@p", "@r", "@s"],
+                };
                 for t in types {
                     if starts_with_ignore_case(t, partial) {
                         self.push(t, pos, Category::Selector, None);

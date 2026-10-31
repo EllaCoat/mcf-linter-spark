@@ -106,6 +106,7 @@ pub fn selector(r: &mut Reader, cx: &mut ArgCtx) -> PResult<SelectorInfo> {
         Some(b'r') => SelectorInfo { max_results: 1, includes_entities: false, is_self: false, nbt_type: None },
         Some(b's') => SelectorInfo { max_results: 1, includes_entities: true, is_self: true, nbt_type: None },
         Some(b'e') => SelectorInfo { max_results: u32::MAX, includes_entities: true, is_self: false, nbt_type: None },
+        Some(b'n') if cx.data.at_least(&[1, 21]) => SelectorInfo { max_results: 1, includes_entities: true, is_self: false, nbt_type: None },
         _ => {
             r.skip();
             return Err(r.error_span(start, "Unknown selector type"));

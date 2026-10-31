@@ -253,6 +253,14 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_nearest_entity_selector_from_1_21() {
+        assert!(error_in("1.20.6", "kill @n").is_some());
+        assert_eq!(error_in("1.21", "kill @n[type=zombie]"), None);
+        assert_eq!(error_in("1.20.6", "say hi @n["), None);
+        assert!(error_in("1.21", "say hi @n[").is_some());
+    }
+
+    #[test]
     fn particle_options_are_snbt_from_1_20_5() {
         assert_eq!(error_in("1.20.4", "particle dust 1 0 0 1 ~ ~ ~ 0 0 0 0 1"), None);
         assert_eq!(error_in("1.20.5", "particle dust{color:[1f,0f,0f],scale:1f} ~ ~ ~ 0 0 0 0 1"), None);
