@@ -763,7 +763,7 @@ impl<'a> Checker<'a> {
         let node = stack.last().expect("a tag to check").0;
         match alt {
             Alt::Any => {}
-            Alt::Struct { fields, open } => {
+            Alt::Struct { fields, open, .. } => {
                 if self.check_type(out, node, NbtKind::Compound, pred)
                     && let NbtValue::Compound(entries) = &node.value
                 {

@@ -237,7 +237,7 @@ impl McDoc {
         let mut open = false;
         for (_, t) in entries {
             for alt in r.resolve::<()>(t, &r.empty, &[], false, 0) {
-                let Alt::Struct { fields: found, open: o } = alt else { continue };
+                let Alt::Struct { fields: found, open: o, .. } = alt else { continue };
                 open |= o;
                 for (f, _) in found.into_iter().filter(|(f, _)| seen.insert(*f as *const Field)) {
                     match f {
@@ -415,8 +415,10 @@ pub enum Alt<'d> {
     Any,
     /// A type that is none of the above, with the `#[id]` of a reference that led to it.
     Leaf(&'d Ty, Rc<Scope<'d>>, Option<&'d IdAttr>),
-    Struct { fields: Vec<(&'d Field, Rc<Scope<'d>>)>, open: bool },
+    Struct { fields: Vec<(&'d Field, Rc<Scope<'d>>)>, open: bool, nbt: bool },
 }
+
+const NBT_ROOTS: &[&str] = &["::java::world::entity::AnyEntity", "::java::world::component::item::BucketEntityData", "::java::world::block::BlockEntityData"];
 
 pub static ANY: Ty = Ty::Any;
 
@@ -441,7 +443,18 @@ impl<'d> Resolver<'d> {
             Ty::Reference(path) => match scope.params.get(path.as_str()) {
                 Some((arg, arg_scope)) => self.resolve(arg, arg_scope, stack, member, depth + 1),
                 None => match self.doc.types.get(path) {
-                    Some(t) => self.resolve(t, &self.empty, stack, member, depth + 1),
+                    Some(t) => {
+                        let alts = self.resolve(t, &self.empty, stack, member, depth + 1);
+                        if !NBT_ROOTS.contains(&path.as_str()) {
+                            return alts;
+                        }
+                        alts.into_iter()
+                            .map(|alt| match alt {
+                                Alt::Struct { fields, open, .. } => Alt::Struct { fields, open, nbt: true },
+                                other => other,
+                            })
+                            .collect()
+                    }
                     None => vec![Alt::Any],
                 },
             },
@@ -505,7 +518,7 @@ impl<'d> Resolver<'d> {
                         Field::Pair { .. } => merged.push((f, scope.clone())),
                         Field::Spread(t) => match self.resolve(t, scope, stack, true, depth + 1).as_slice() {
                             [Alt::Any] => open = true,
-                            [Alt::Struct { fields, open: o }] => {
+                            [Alt::Struct { fields, open: o, .. }] => {
                                 merged.extend(fields.iter().map(|(f, s)| (*f, s.clone())));
                                 open |= o;
                             }
@@ -513,7 +526,7 @@ impl<'d> Resolver<'d> {
                         },
                     }
                 }
-                vec![Alt::Struct { fields: merged, open }]
+                vec![Alt::Struct { fields: merged, open, nbt: false }]
             }
             _ => vec![Alt::Leaf(ty, scope.clone(), None)],
         }
