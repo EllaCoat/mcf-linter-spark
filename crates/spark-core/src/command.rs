@@ -140,10 +140,64 @@ impl<'a> Walker<'a> {
 pub(crate) mod tests {
     use super::*;
     use crate::facts::kind;
+    use crate::tree::Parser;
+    use crate::version::RELEASES;
 
     /// Parses `line` as `version` reads it, with the default settings.
     pub(crate) fn parse_in(version: &str, line: &str) -> CommandResult {
         parse_command(line, 0, crate::data::for_version(version).unwrap(), &Config::default())
+    }
+
+    /// The error message of `line` in `version`, or `None` when it parses.
+    fn error_in(version: &str, line: &str) -> Option<String> {
+        parse_in(version, line).error.map(|e| e.message)
+    }
+
+    #[test]
+    fn every_release_has_no_unknown_parser() {
+        for (version, _) in RELEASES {
+            let data = crate::data::for_version(version).unwrap();
+            let unknown: Vec<_> = data
+                .tree
+                .nodes
+                .iter()
+                .filter_map(|n| match &n.kind {
+                    NodeKind::Argument { parser: Parser::Unknown(id), .. } => Some(id.to_string()),
+                    _ => None,
+                })
+                .collect();
+            assert!(unknown.is_empty(), "{version}: {unknown:?}");
+        }
+    }
+
+    #[test]
+    fn commands_that_every_release_reads_alike() {
+        for (version, _) in RELEASES {
+            for line in [
+                "say hi",
+                "function t:lib",
+                "scoreboard players set @s obj 1",
+                "execute as @a at @s run tp @s ~ ~1 ~",
+                "loot give @s loot minecraft:chests/igloo_chest",
+                "execute if predicate t:p run say hi",
+            ] {
+                assert_eq!(error_in(version, line), None, "{version}: {line}");
+            }
+        }
+    }
+
+    #[test]
+    fn loot_tables_predicates_and_modifiers_are_ids_or_inline_from_1_20_5() {
+        let refs = |line: &str| -> Vec<(&str, String)> {
+            let result = parse_in("1.20.5", line);
+            assert_eq!(result.error.map(|e| e.message), None, "{line}");
+            result.effects.into_iter().filter_map(|e| if let Effect::Ref(r) = e { Some((r.kind, r.id)) } else { None }).collect()
+        };
+        assert_eq!(refs("loot give @s loot chests/igloo_chest"), [(kind::LOOT_TABLE, "minecraft:chests/igloo_chest".to_string())]);
+        assert_eq!(refs("execute if predicate t:p run say hi"), [(kind::PREDICATE, "t:p".to_string())]);
+        assert_eq!(refs("item modify entity @s weapon t:m"), [(kind::ITEM_MODIFIER, "t:m".to_string())]);
+        assert_eq!(refs("loot give @s loot {pools: []}"), []);
+        assert!(error_in("1.20.4", "loot give @s loot {pools: []}").is_some());
     }
 
     #[test]
@@ -159,5 +213,30 @@ pub(crate) mod tests {
         assert_eq!(refs("1.21.2", "advancement grant @s only t:a"), [(kind::ADVANCEMENT, "t:a".to_string())]);
         assert_eq!(refs("1.21.2", "recipe give @s t:r"), [(kind::RECIPE, "t:r".to_string())]);
         assert_eq!(refs("1.20.4", "locate biome minecraft:plains"), []);
+    }
+
+    #[test]
+    fn slot_ranges_from_1_20_5() {
+        assert_eq!(error_in("1.20.5", "execute if items entity @s container.* minecraft:stone"), None);
+        assert_eq!(error_in("1.20.5", "execute if items entity @s armor.body minecraft:stone"), None);
+        assert!(error_in("1.20.5", "execute if items entity @s container.54 minecraft:stone").is_some());
+        assert!(error_in("1.20.5", "execute if items entity @s container.05 minecraft:stone").is_some());
+        assert_eq!(error_in("26.3", "execute if items entity @s weapon.* minecraft:stone"), None);
+        assert_eq!(error_in("26.3", "execute if slots block ~ ~ ~ t:my_slots run say hi"), None);
+    }
+
+    #[test]
+    fn colors_and_the_parsers_of_later_releases() {
+        assert_eq!(error_in("1.21.6", "waypoint modify @s color hex F80"), None);
+        assert_eq!(error_in("1.21.6", "waypoint modify @s color hex FF8800"), None);
+        assert!(error_in("1.21.6", "waypoint modify @s color hex FF88").is_some());
+        assert_eq!(error_in("1.21.6", "dialog show @s minecraft:server_links"), None);
+        assert_eq!(error_in("1.21.5", "test run minecraft:*"), None);
+        assert_eq!(error_in("26.2", "team modify t color red"), None);
+        assert_eq!(error_in("26.2", "team modify t color reset"), None);
+        assert!(error_in("26.2", "team modify t color bold").is_some());
+        assert_eq!(error_in("26.3", "swing @s mainhand stab"), None);
+        assert!(error_in("26.3", "swing @s mainhand poke").is_some());
+        assert_eq!(error_in("26.3", "place feature minecraft:oak"), None);
     }
 }

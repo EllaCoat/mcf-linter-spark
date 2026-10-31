@@ -211,7 +211,12 @@ pub fn parse(parser: &Parser, r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
         Parser::ItemStack => blockitem::item(r, cx, false),
         Parser::ItemPredicate => blockitem::item(r, cx, true),
         Parser::ItemSlot => basic::item_slot(r),
+        Parser::ItemSlots => basic::item_slots(r),
+        Parser::SlotSource => basic::slot_source(r, cx),
         Parser::Color => basic::one_of(r, basic::COLORS, "color"),
+        Parser::TeamColor => basic::one_of(r, &basic::COLORS[..16], "color"),
+        Parser::HexColor => basic::hex_color(r),
+        Parser::SwingAnimation => basic::one_of(r, basic::SWING_ANIMATIONS, "swing animation"),
         Parser::Component => text::component(r, cx),
         Parser::Style => text::style(r, cx),
         Parser::Message => basic::message(r, cx),
@@ -244,6 +249,8 @@ pub fn parse(parser: &Parser, r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
         Parser::ResourceOrTag { registry } | Parser::ResourceOrTagKey { registry } => {
             basic::resource(r, cx, registry, true)
         }
+        Parser::ResourceOrId { registry } => basic::resource_or_id(r, cx, registry),
+        Parser::ResourceSelector { .. } => basic::resource_selector(r),
         Parser::Unknown(id) => Err(r.error(format!("Unsupported argument type {id}"))),
     }
 }

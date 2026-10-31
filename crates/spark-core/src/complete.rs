@@ -271,10 +271,12 @@ impl<'a> Walker<'a, '_> {
             Parser::TemplateMirror => self.values(args::TEMPLATE_MIRRORS, partial, pos),
             Parser::TemplateRotation => self.values(args::TEMPLATE_ROTATIONS, partial, pos),
             Parser::Color => self.values(args::basic::COLORS, partial, pos),
+            Parser::TeamColor => self.values(&args::basic::COLORS[..16], partial, pos),
+            Parser::SwingAnimation => self.values(args::basic::SWING_ANIMATIONS, partial, pos),
             Parser::Operation => self.values(&["=", "+=", "-=", "*=", "/=", "%=", "<", ">", "><"], partial, pos),
             Parser::ObjectiveCriteria => self.values(args::basic::SIMPLE_CRITERIA, partial, pos),
             Parser::ScoreboardSlot => self.values(&["list", "sidebar", "below_name"], partial, pos),
-            Parser::ItemSlot => self.values(ITEM_SLOTS, partial, pos),
+            Parser::ItemSlot | Parser::ItemSlots | Parser::SlotSource => self.values(ITEM_SLOTS, partial, pos),
             Parser::Swizzle => self.values(&["xyz", "xy", "xz", "yz", "x", "y", "z"], partial, pos),
             Parser::Entity { players_only, .. } => self.selector(partial, pos, *players_only),
             Parser::GameProfile => self.selector(partial, pos, true),
@@ -306,7 +308,11 @@ impl<'a> Walker<'a, '_> {
                 self.resource(registry, partial, pos, true)
             }
             Parser::ResourceLocation if name == "sound" => self.registry("minecraft:sound_event", partial, pos),
-            Parser::ResourceLocation | Parser::Objective | Parser::Team | Parser::String(StringKind::Word) => {
+            Parser::ResourceLocation
+            | Parser::ResourceOrId { .. }
+            | Parser::Objective
+            | Parser::Team
+            | Parser::String(StringKind::Word) => {
                 if let Some(k) = self.probe(parser, name, path, values) {
                     self.symbol(k, partial, pos);
                 }

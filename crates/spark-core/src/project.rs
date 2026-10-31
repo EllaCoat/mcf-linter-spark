@@ -1010,6 +1010,41 @@ mod tests {
         assert_eq!(unresolved, ["t:old"]);
     }
 
+    #[test]
+    fn every_release_checks_a_pack_laid_out_for_it() {
+        for (version, _) in crate::version::RELEASES {
+            let since = |v: &[u32]| crate::version::cmp(&crate::version::parse(version), v).is_ge();
+            let dir = |plural: &'static str| if since(&[1, 21]) { plural.strip_suffix('s').unwrap() } else { plural };
+            let predicate = if since(&[26, 3]) {
+                r#"{"type": "minecraft:random_chance", "chance": 0.5}"#
+            } else {
+                r#"{"condition": "minecraft:random_chance", "chance": 0.5}"#
+            };
+            let files = [
+                (format!("data/t/{}/main.mcfunction", dir("functions")), "function t:lib\nfunction #t:load\nloot give @s loot t:chest\nexecute if predicate t:p run say hi\n"),
+                (format!("data/t/{}/lib.mcfunction", dir("functions")), "say lib\n"),
+                (format!("data/t/tags/{}/load.json", dir("functions")), r#"{"values": ["t:lib"]}"#),
+                (format!("data/t/{}/chest.json", dir("loot_tables")), r#"{"pools": []}"#),
+                (format!("data/t/{}/p.json", dir("predicates")), predicate),
+                ("pack.mcmeta".to_string(), "{}"),
+            ];
+            let root = std::env::temp_dir().join("ai-agent").join("mcf-linter-spark-tests").join(format!("release-{version}"));
+            let _ = std::fs::remove_dir_all(&root);
+            for (rel, text) in &files {
+                let path = root.join(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, text).unwrap();
+            }
+            let settings = format!(
+                r#"{{"datapack.env.cmdVersion": "{version}", "datapack.lint.strictFunctionCheck": ["error", true], "datapack.lint.strictFunctionTagCheck": ["error", true], "datapack.lint.strictLootTableCheck": ["error", true], "datapack.lint.strictPredicateCheck": ["error", true]}}"#
+            );
+            let p = Project::load(&root, Config::from_settings(&settings).unwrap(), &Options { ignore: Vec::new(), max_depth: 0 }).unwrap();
+            assert_eq!(p.files.len(), 5, "{version}");
+            let diagnostics: Vec<_> = p.all_diagnostics().into_iter().flat_map(|(_, d)| d).map(|d| d.message).collect();
+            assert!(diagnostics.is_empty(), "{version}: {diagnostics:?}");
+        }
+    }
+
     /// A pack written under the temp directory, with the IMP-Doc rules of the
     /// modified Spyglass enabled.
     fn spyglass_project(name: &str, files: &[(&str, &str)]) -> Project {

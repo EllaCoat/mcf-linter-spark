@@ -65,7 +65,14 @@ pub enum Parser {
     ItemStack,
     ItemPredicate,
     ItemSlot,
+    ItemSlots,
+    /// A slot range, or a slot source of the registry or inline.
+    SlotSource,
     Color,
+    /// `color` without `reset`, from 26.2.
+    TeamColor,
+    HexColor,
+    SwingAnimation,
     Component,
     Style,
     Message,
@@ -94,6 +101,11 @@ pub enum Parser {
     ResourceOrTag { registry: Box<str> },
     ResourceKey { registry: Box<str> },
     ResourceOrTagKey { registry: Box<str> },
+    /// An id of a data pack registry or the element written inline in SNBT, as `ResourceOrIdArgument`
+    /// reads `loot_table` and the like. `registry` has no namespace.
+    ResourceOrId { registry: &'static str },
+    /// An id pattern with `*` and `?`.
+    ResourceSelector { registry: Box<str> },
     Unknown(Box<str>),
 }
 
@@ -211,7 +223,12 @@ fn parse_parser(v: &Value) -> Parser {
         "minecraft:item_stack" => Parser::ItemStack,
         "minecraft:item_predicate" => Parser::ItemPredicate,
         "minecraft:item_slot" => Parser::ItemSlot,
+        "minecraft:item_slots" => Parser::ItemSlots,
+        "minecraft:slot_source" => Parser::SlotSource,
         "minecraft:color" => Parser::Color,
+        "minecraft:team_color" => Parser::TeamColor,
+        "minecraft:hex_color" => Parser::HexColor,
+        "minecraft:swing_animation" => Parser::SwingAnimation,
         "minecraft:component" => Parser::Component,
         "minecraft:style" => Parser::Style,
         "minecraft:message" => Parser::Message,
@@ -240,6 +257,14 @@ fn parse_parser(v: &Value) -> Parser {
         "minecraft:resource_or_tag" => Parser::ResourceOrTag { registry: str_prop("registry") },
         "minecraft:resource_key" => Parser::ResourceKey { registry: str_prop("registry") },
         "minecraft:resource_or_tag_key" => Parser::ResourceOrTagKey { registry: str_prop("registry") },
+        "minecraft:resource_selector" => Parser::ResourceSelector { registry: str_prop("registry") },
+        "minecraft:loot_table" => Parser::ResourceOrId { registry: "loot_table" },
+        "minecraft:loot_predicate" => Parser::ResourceOrId { registry: "predicate" },
+        "minecraft:loot_modifier" => Parser::ResourceOrId { registry: "item_modifier" },
+        "minecraft:dialog" => Parser::ResourceOrId { registry: "dialog" },
+        "minecraft:feature" => Parser::ResourceOrId { registry: "worldgen/feature" },
+        "minecraft:context_float_provider" => Parser::ResourceOrId { registry: "context_float_provider" },
+        "minecraft:context_int_provider" => Parser::ResourceOrId { registry: "context_int_provider" },
         other => Parser::Unknown(other.into()),
     }
 }
