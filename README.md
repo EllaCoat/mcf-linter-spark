@@ -85,10 +85,11 @@ GitHub Actions でデータパックを検査する設定例です。
   with:
     path: ~/.cache/mcf-linter-spark
     key: mcf-linter-spark-data-1.20.4-c85548aae6f2-5aab1da2ff00
-- run: cargo install --git https://github.com/EllaCoat/mcf-linter-spark --locked mcf-linter-spark
+- run: cargo install --git https://github.com/EllaCoat/mcf-linter-spark --tag v0.1.1 --locked mcf-linter-spark
 - run: mcf-linter-spark check . --ignore 'animated_java:**' --format github
 ```
 
+- `--tag` で使う版を固定します。
 - `actions/cache` でバニラのデータを実行の間で残し、取得できない時に CI が落ちるのを防ぎます。cache は job が成功した時に保存されます。
 - key には取得するデータの commit を入れています。データの commit が違うバージョンの mcf-linter-spark では、新しい cache になります。
 

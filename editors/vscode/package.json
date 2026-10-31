@@ -2,7 +2,7 @@
   "name": "mcf-linter-spark",
   "displayName": "mcf-linter-spark",
   "description": "Fast mcfunction linter with IMP-Doc support for Minecraft Java Edition 1.20.4 data packs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "ellacoat",
   "license": "MIT",
   "private": true,
