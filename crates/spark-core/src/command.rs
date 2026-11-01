@@ -375,6 +375,21 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn only_bossbar_commands_take_a_bossbar_id() {
+        let refs = |line: &str| -> Vec<(&str, String)> {
+            let result = parse_in("26.3", line);
+            assert_eq!(result.error.map(|e| e.message), None, "{line}");
+            result.effects.into_iter().filter_map(|e| if let Effect::Ref(r) = e { Some((r.kind, r.id)) } else { None }).collect()
+        };
+        for line in ["bossbar get t:b max", "bossbar set t:b value 1", "bossbar remove t:b", "execute store result bossbar t:b value run say a"] {
+            assert_eq!(refs(line), [(kind::BOSSBAR, "t:b".to_string())], "{line}");
+        }
+        for line in ["attribute @s minecraft:max_health modifier add t:m 1 add_value", "stopwatch create t:w", "execute if stopwatch t:w 1.. run say a", "test create t:t"] {
+            assert_eq!(refs(line), [], "{line}");
+        }
+    }
+
+    #[test]
     fn inline_elements_are_checked_against_their_type() {
         for v in ["1.20.5", "1.21.5"] {
             assert_eq!(diagnostics_in(v, "loot give @s loot {pools:[]}"), none(), "{v}");

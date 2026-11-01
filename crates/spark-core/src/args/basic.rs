@@ -385,7 +385,7 @@ pub fn resource_location(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
     match cx.name {
         "advancement" => cx.reference(kind::ADVANCEMENT, id, s, e),
         "id" if cx.follows(&["bossbar", "add"]) => cx.define(kind::BOSSBAR, crate::facts::full_id(id), s, e),
-        "id" => cx.reference(kind::BOSSBAR, id, s, e),
+        "id" if cx.follows(&["bossbar"]) || ["get", "remove", "set"].iter().any(|l| cx.follows(&["bossbar", l])) => cx.reference(kind::BOSSBAR, id, s, e),
         "predicate" => cx.reference(kind::PREDICATE, id, s, e),
         "modifier" => cx.reference(kind::ITEM_MODIFIER, id, s, e),
         "loot_table" => cx.reference(kind::LOOT_TABLE, id, s, e),
