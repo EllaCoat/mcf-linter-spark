@@ -38,10 +38,17 @@ pub enum Category {
     Text,
     /// A text style in SNBT (1.21.5).
     Style,
+    /// A data pack element written inline in a command (1.20.5), by its kind (`loot_table`).
+    Resource,
+    /// An item modifier written inline in a command, which from 26.3 may be a list of ids and
+    /// modifiers although a file holds one modifier.
+    ItemModifier,
+    /// A slot source written inline in a command (26.3), which may be a list like an item modifier.
+    SlotSource,
 }
 
 impl Category {
-    /// The dispatcher of the category's types, or the one type of `Text` and `Style`.
+    /// The dispatcher of the category's types, or the one type of the categories with one.
     pub fn registry(self) -> &'static str {
         match self {
             Category::Entity => "minecraft:entity",
@@ -52,6 +59,9 @@ impl Category {
             Category::Particle => "minecraft:particle",
             Category::Text => "::java::util::text::Text",
             Category::Style => "::java::util::text::TextStyle",
+            Category::Resource => "minecraft:resource",
+            Category::ItemModifier => "::java::data::item_modifier::ItemModifierArgument",
+            Category::SlotSource => "::java::data::slot_source::SlotSourceArgument",
         }
     }
 }
@@ -79,7 +89,7 @@ impl Target {
 /// entries merged when the id is not known.
 fn root_type<'d>(doc: &'d McDoc, target: &Target) -> &'d Ty {
     let registry = target.category.registry();
-    if matches!(target.category, Category::Text | Category::Style) {
+    if matches!(target.category, Category::Text | Category::Style | Category::ItemModifier | Category::SlotSource) {
         return doc.types.get(registry).unwrap_or(&ANY);
     }
     match &target.id {

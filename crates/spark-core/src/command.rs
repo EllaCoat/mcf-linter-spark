@@ -362,6 +362,37 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn inline_elements_are_checked_against_their_type() {
+        for v in ["1.20.5", "1.21.5"] {
+            assert_eq!(diagnostics_in(v, "loot give @s loot {pools:[]}"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "item modify entity @s weapon.mainhand {function:\"minecraft:set_count\",count:2}"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "execute if predicate {condition:\"minecraft:random_chance\"} run say a"), ["Missing key “chance”"], "{v}");
+        }
+        assert_eq!(diagnostics_in("26.3", "execute if predicate {condition:\"minecraft:random_chance\",chance:0.5f} run say a"), ["Missing key “type”"]);
+        assert_eq!(diagnostics_in("26.3", "dialog show @s {type:\"minecraft:notice\"}"), ["Missing key “title”"]);
+        assert_eq!(diagnostics_in("26.3", "compute default integer {type:\"minecraft:constant\"}"), ["Missing key “value”"]);
+        let modifier = |m: &str| format!("item modify entity @s weapon.mainhand {m}");
+        assert_eq!(diagnostics_in("26.3", &modifier("[{type:\"minecraft:set_count\",count:2},{type:\"minecraft:set_count\",count:3}]")), none());
+        assert_eq!(diagnostics_in("26.3", &modifier("[{type:\"minecraft:set_count\"}]")), ["Missing key “count”"]);
+        assert_eq!(diagnostics_in("26.3", "execute if items entity @s [{type:\"minecraft:slot_range\",slots:\"weapon.mainhand\"}] * run say a"), none());
+        assert_eq!(diagnostics_in("26.3", &modifier("[\"t:m\",{type:\"minecraft:set_count\",count:3}]")), none());
+        assert_eq!(diagnostics_in("26.3", "execute if items entity @s [\"t:s\",{type:\"minecraft:slot_range\",slots:\"weapon.offhand\"}] * run say a"), none());
+        let refs = |v: &str, line: &str| -> Vec<(&str, String)> {
+            parse_in(v, line).effects.into_iter().filter_map(|e| if let Effect::Ref(r) = e { Some((r.kind, r.id)) } else { None }).collect()
+        };
+        assert_eq!(refs("26.3", &modifier("[\"t:m\"]")), [(kind::ITEM_MODIFIER, "t:m".to_string())]);
+        for v in ["1.20.5", "1.21.5"] {
+            assert_eq!(diagnostics_in(v, "loot give @s loot \"t:l\""), none(), "{v}");
+            assert_eq!(refs(v, "loot give @s loot \"t:l\""), [(kind::LOOT_TABLE, "t:l".to_string())], "{v}");
+            assert!(error_in(v, "loot give @s loot \"T:l\"").is_some(), "{v}");
+        }
+        assert_eq!(diagnostics_in("1.21.6", "loot give @s loot \"t:l\""), ["Expected a compound tag but got a string tag"]);
+        assert_eq!(diagnostics_in("1.21.5", &modifier("[{type:\"minecraft:set_count\",count:2}]")), ["Missing key “function”"]);
+        let double = "Expected a float tag but got a double tag (rule: “nbtTypeCheck”)";
+        assert_eq!(diagnostics_in("1.21.5", &modifier("{function:\"minecraft:set_count\",count:{min:1.0,max:3.0}}")), [double, double]);
+    }
+
+    #[test]
     fn data_pack_ids_in_resource_arguments_are_references() {
         let refs = |version: &str, line: &str| -> Vec<(&str, String)> {
             let result = parse_in(version, line);
