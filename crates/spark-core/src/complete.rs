@@ -276,7 +276,13 @@ impl<'a> Walker<'a, '_> {
             Parser::Operation => self.values(&["=", "+=", "-=", "*=", "/=", "%=", "<", ">", "><"], partial, pos),
             Parser::ObjectiveCriteria => self.values(args::basic::SIMPLE_CRITERIA, partial, pos),
             Parser::ScoreboardSlot => self.values(&["list", "sidebar", "below_name"], partial, pos),
-            Parser::ItemSlot | Parser::ItemSlots | Parser::SlotSource => self.values(ITEM_SLOTS, partial, pos),
+            Parser::ItemSlot | Parser::ItemSlots => self.values(ITEM_SLOTS, partial, pos),
+            Parser::SlotSource => {
+                self.values(ITEM_SLOTS, partial, pos);
+                if let Some(k) = self.probe(parser, name, path, values) {
+                    self.symbol(k, partial, pos);
+                }
+            }
             Parser::Swizzle => self.values(&["xyz", "xy", "xz", "yz", "x", "y", "z"], partial, pos),
             Parser::Entity { players_only, .. } => self.selector(partial, pos, *players_only),
             Parser::GameProfile => self.selector(partial, pos, true),
@@ -409,7 +415,7 @@ impl<'a> Walker<'a, '_> {
     /// The project's ids of a kind, with the vanilla ones it resolves against.
     fn symbol(&mut self, k: Kind, partial: &str, pos: usize) {
         let mut ids = self.source.symbols(k);
-        if let Some(vanilla) = self.data.vanilla(k) {
+        if let Some(vanilla) = self.data.vanilla_json(k) {
             ids.extend(vanilla.iter().cloned());
         }
         self.ids(&ids, partial, pos, k);
@@ -419,10 +425,17 @@ impl<'a> Walker<'a, '_> {
         let short = registry.strip_prefix("minecraft:").unwrap_or(registry);
         if let Some(rest) = partial.strip_prefix('#') {
             if allow_tag {
-                let tags: Vec<String> = self.data.tags.get(short).map(|s| s.iter().cloned().collect()).unwrap_or_default();
+                let mut tags: Vec<String> = self.data.tags.get(short).map(|s| s.iter().cloned().collect()).unwrap_or_default();
+                if let Some(k) = self.data.file_kind(&format!("tag/{short}")) {
+                    tags.extend(self.source.symbols(k));
+                }
                 self.tag_ids(&tags, rest, pos + 1, registry);
             }
             return;
+        }
+        // The contents of a data pack kind include the project's files.
+        if let Some(k) = self.data.file_kind(short) {
+            return self.symbol(k, partial, pos);
         }
         let ids: Vec<String> = self.data.registries.get(registry).map(|s| s.iter().cloned().collect()).unwrap_or_default();
         self.ids(&ids, partial, pos, short);
@@ -855,6 +868,11 @@ mod tests {
                 kind::ENTITY_TAG => vec!["Enemy".into()],
                 kind::ADVANCEMENT => vec!["example:first_join".into()],
                 kind::DAMAGE_TYPE => vec!["example:magic".into()],
+                "enchantment" => vec!["example:sharp".into()],
+                "dialog" => vec!["example:menu".into()],
+                "slot_source" => vec!["example:hands".into()],
+                "worldgen/biome" => vec!["example:glade".into()],
+                "tag/worldgen/biome" => vec!["example:warm".into()],
                 _ => Vec::new(),
             }
         }
@@ -898,6 +916,16 @@ mod tests {
         assert!(has_in("1.21.2", "advancement grant @s only example:", "example:first_join", 26));
         assert!(has_in("1.21.2", "advancement grant @s only ", "minecraft:", 26));
         assert!(has_in("26.3", "summon zomb", "zombie", 7));
+        assert!(has_in("1.21", "enchant @s example:", "example:sharp", 11));
+        assert!(has_in("1.21", "enchant @s minecraft:", "minecraft:sharpness", 11));
+        assert!(!has_in("1.20.4", "enchant @s example:", "example:sharp", 11));
+        assert!(has_in("26.3", "dialog show @s example:", "example:menu", 15));
+        assert!(has_in("26.3", "execute if items entity @s example:", "example:hands", 27));
+        assert!(has_in("26.3", "execute if items entity @s weap", "weapon", 27));
+        assert!(has("locate biome example:", "example:glade", 13));
+        assert!(has("locate biome minecraft:pl", "minecraft:plains", 13));
+        assert!(has("locate biome #example:", "#example:warm", 13));
+        assert!(has("locate biome #minecraft:is_o", "#minecraft:is_ocean", 13));
     }
 
     #[test]

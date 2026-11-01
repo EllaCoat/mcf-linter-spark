@@ -12,8 +12,8 @@ pub struct Config {
     /// The game version: `datapack.env.cmdVersion`, else the `env.gameVersion` of a
     /// `spyglass.json` when it names a version with data, else 1.20.4.
     pub cmd_version: String,
-    /// Whether `cmd_version` came from `datapack.env.cmdVersion`.
-    cmd_version_set: bool,
+    /// Whether a setting named `cmd_version` (else it is the default).
+    version_set: bool,
     /// `public` unless `datapack.env.defaultVisibility` says otherwise.
     pub default_visibility: Value,
     /// Whether the project has a `spyglass.json`, the configuration of the
@@ -26,7 +26,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             cmd_version: "1.20.4".into(),
-            cmd_version_set: false,
+            version_set: false,
             default_visibility: Value::String("public".into()),
             spyglass: false,
             lint: HashMap::new(),
@@ -61,7 +61,7 @@ impl Config {
         let mut config = Config::default();
         if let Some(v) = flat.get("datapack.env.cmdVersion").and_then(Value::as_str) {
             config.cmd_version = v.to_string();
-            config.cmd_version_set = true;
+            config.version_set = true;
         }
         if let Some(v) = flat.get("datapack.env.defaultVisibility") {
             config.default_visibility = v.clone();
@@ -72,6 +72,10 @@ impl Config {
             }
         }
         Ok(config)
+    }
+
+    pub fn version_set(&self) -> bool {
+        self.version_set
     }
 
     /// A diagnostic rule written as `[severity, value]`. Returns `None` when the
@@ -95,10 +99,11 @@ impl Config {
         self.spyglass = true;
         // Spyglass also takes `Auto` and `Latest release`, which name no version here.
         if let Some(v) = value.pointer("/env/gameVersion").and_then(Value::as_str)
-            && !self.cmd_version_set
+            && !self.version_set
             && crate::version::release_index(v).is_some()
         {
             self.cmd_version = v.to_string();
+            self.version_set = true;
         }
         if let Some(lint) = value.get("lint").and_then(Value::as_object) {
             for (k, v) in lint {

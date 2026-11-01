@@ -10,26 +10,8 @@ use std::rc::Rc;
 use crate::data::VersionData;
 use crate::diag::{Diagnostic, Severity};
 use crate::facts::{Kind, Ref, full_id};
-use crate::impdoc;
 use crate::json::{self, Json, Node, Reading};
 use crate::mcdoc::{self, Alt, Field, Holds, IdAttr, Key, Lit, McDoc, NumKind, Range, Resolver, Scope, Tags, Tree, Ty, id_shape, same_string, strip_minecraft};
-
-/// Data pack JSON kinds that IMP-Doc does not name, by their 1.20.4 directory under `data/<ns>/`.
-pub const EXTRA_KINDS: &[(&str, Kind)] = &[
-    ("chat_type/", "chat_type"),
-    ("trim_material/", "trim_material"),
-    ("trim_pattern/", "trim_pattern"),
-    ("tags/banner_pattern/", "tag/banner_pattern"),
-    ("tags/cat_variant/", "tag/cat_variant"),
-    ("tags/instrument/", "tag/instrument"),
-    ("tags/painting_variant/", "tag/painting_variant"),
-    ("tags/point_of_interest_type/", "tag/point_of_interest_type"),
-];
-
-/// The file kind named like a registry (`loot_table`, `tag/block`), if files of it exist.
-pub(crate) fn file_kind(name: &str) -> Option<Kind> {
-    impdoc::FILE_TYPES.iter().copied().chain(EXTRA_KINDS.iter().map(|(_, k)| *k)).find(|k| *k == name)
-}
 
 /// The schema of a data pack JSON file of this kind, if the schema covers it.
 pub fn schema(kind: Kind, doc: &McDoc) -> Option<Ty> {
@@ -286,10 +268,10 @@ impl<'d> Checker<'d> {
         }
         let (start, end) = (span.0 as u32, span.1 as u32);
         if is_tag || attr.tags == Tags::Implicit {
-            if let Some(kind) = file_kind(&format!("tag/{registry}")) {
+            if let Some(kind) = self.data.file_kind(&format!("tag/{registry}")) {
                 out.refs.push(Ref { kind, id, start, end });
             }
-        } else if let Some(kind) = file_kind(registry) {
+        } else if let Some(kind) = self.data.file_kind(registry) {
             out.refs.push(Ref { kind, id, start, end });
         } else if id.starts_with("minecraft:")
             && self.data.registries.contains_key(&format!("minecraft:{registry}"))
@@ -624,7 +606,7 @@ impl<'d> Checker<'d> {
         let Some(registry) = attr.registry.as_deref() else { return Vec::new() };
         let mut out: Vec<String> = Vec::new();
         if attr.tags != Tags::Required && attr.tags != Tags::Implicit {
-            if let Some(kind) = file_kind(registry) {
+            if let Some(kind) = self.data.file_kind(registry) {
                 out.extend(project_ids(kind));
                 out.extend(self.data.vanilla_json(kind).into_iter().flatten().cloned());
                 if kind == crate::facts::kind::DIMENSION {
@@ -635,7 +617,7 @@ impl<'d> Checker<'d> {
             }
         }
         if attr.tags != Tags::No
-            && let Some(kind) = file_kind(&format!("tag/{registry}"))
+            && let Some(kind) = self.data.file_kind(&format!("tag/{registry}"))
         {
             let prefix = if attr.tags == Tags::Implicit { "" } else { "#" };
             let tags = project_ids(kind).into_iter().chain(self.data.vanilla_json(kind).into_iter().flatten().cloned());

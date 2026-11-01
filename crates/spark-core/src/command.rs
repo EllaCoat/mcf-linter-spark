@@ -212,7 +212,11 @@ pub(crate) mod tests {
         }
         assert_eq!(refs("1.21.2", "advancement grant @s only t:a"), [(kind::ADVANCEMENT, "t:a".to_string())]);
         assert_eq!(refs("1.21.2", "recipe give @s t:r"), [(kind::RECIPE, "t:r".to_string())]);
-        assert_eq!(refs("1.20.4", "locate biome minecraft:plains"), []);
+        assert_eq!(refs("1.20.4", "locate biome t:b"), [("worldgen/biome", "t:b".to_string())]);
+        assert_eq!(refs("1.20.4", "effect give @s t:e"), []);
+        assert_eq!(refs("1.20.4", "enchant @s t:e"), []);
+        assert_eq!(refs("1.21", "enchant @s t:e"), [("enchantment", "t:e".to_string())]);
+        assert_eq!(refs("1.21", "execute if biome ~ ~ ~ #t:b run say hi"), [("tag/worldgen/biome", "t:b".to_string())]);
     }
 
     #[test]
