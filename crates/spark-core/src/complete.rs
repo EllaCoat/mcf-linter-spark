@@ -899,6 +899,8 @@ fn selector_type(options: &str) -> Option<String> {
     })
 }
 
+const MAX_STORAGE_KEYS: usize = 64;
+
 /// Adds the NBT paths that `storage <id> <path>` uses in a function's text, with every
 /// prefix (`Return`, `Return.Difficulty`), by storage id. Elements and filters are dropped.
 /// IMP-Doc lines such as `# @input storage api: Argument.ID` count as well.
@@ -926,6 +928,7 @@ pub fn collect_storage_paths(text: &str, out: &mut HashMap<String, BTreeSet<Stri
             if keys.iter().any(|k| !k.bytes().all(crate::reader::is_allowed_in_unquoted)) {
                 continue;
             }
+            keys.truncate(MAX_STORAGE_KEYS);
             let set = out.entry(full_id(w[1])).or_default();
             for n in 1..=keys.len() {
                 set.insert(keys[..n].join("."));
@@ -1169,6 +1172,13 @@ mod tests {
         assert!(has("data get storage api: Return.", "Difficulty", 29));
         assert!(has("data get storage api: Argument.Damage[0].", "Amount", 41));
         assert!(!has("data get storage example:temp ", "Argument", 30));
+    }
+
+    #[test]
+    fn storage_paths_are_collected_up_to_the_key_limit() {
+        let mut out = HashMap::new();
+        collect_storage_paths(&format!("data get storage a:b {}a\n", "a.".repeat(10_000)), &mut out);
+        assert_eq!(out["a:b"].len(), MAX_STORAGE_KEYS);
     }
 
     #[test]
