@@ -7,6 +7,7 @@ mod coords;
 pub mod entity;
 pub mod nbt;
 pub mod nbt_check;
+mod snbt;
 pub mod text;
 
 use crate::command::Effect;
@@ -210,8 +211,8 @@ pub fn parse(parser: &Parser, r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
         Parser::BlockPredicate => blockitem::block_state(r, cx, true),
         Parser::ItemStack => blockitem::item(r, cx, false),
         Parser::ItemPredicate => blockitem::item(r, cx, true),
-        Parser::ItemSlot => basic::item_slot(r),
-        Parser::ItemSlots => basic::item_slots(r),
+        Parser::ItemSlot => basic::item_slot(r, cx.data),
+        Parser::ItemSlots => basic::item_slots(r, cx.data),
         Parser::SlotSource => basic::slot_source(r, cx),
         Parser::Color => basic::one_of(r, basic::COLORS, "color"),
         Parser::TeamColor => basic::one_of(r, &basic::COLORS[..16], "color"),

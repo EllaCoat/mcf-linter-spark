@@ -1,4 +1,5 @@
 use super::{ArgCtx, entity, read_resource_location};
+use crate::data::VersionData;
 use crate::facts::kind;
 use crate::reader::{PResult, Reader};
 
@@ -84,34 +85,73 @@ pub fn swizzle(r: &mut Reader) -> PResult<()> {
     Ok(())
 }
 
-pub fn item_slot(r: &mut Reader) -> PResult<()> {
+pub fn item_slot(r: &mut Reader, data: &VersionData) -> PResult<()> {
     let start = r.pos;
     let s = r.read_unquoted();
-    if is_slot(s) { Ok(()) } else { Err(r.error_span(start, format!("Unknown slot '{s}'"))) }
+    if is_slot(s, data) { Ok(()) } else { Err(r.error_span(start, format!("Unknown slot '{s}'"))) }
 }
 
 /// `item_slots`: a slot, or a group of slots (`container.*`, `armor.*`).
-pub fn item_slots(r: &mut Reader) -> PResult<()> {
+pub fn item_slots(r: &mut Reader, data: &VersionData) -> PResult<()> {
     let start = r.pos;
     let s = r.read_word();
-    if is_slot_range(s) { Ok(()) } else { Err(r.error_span(start, format!("Unknown slot '{s}'"))) }
+    if is_slot_range(s, data) { Ok(()) } else { Err(r.error_span(start, format!("Unknown slot '{s}'"))) }
 }
 
-/// The slot names of every version from 1.20.5, as `SlotRanges` lists them.
-fn is_slot_range(s: &str) -> bool {
-    const GROUPS: &[&str] =
-        &["container", "hotbar", "inventory", "enderchest", "villager", "mob.inventory", "horse", "weapon", "armor", "player.crafting"];
-    s.strip_suffix(".*").is_some_and(|g| GROUPS.contains(&g))
-        || is_slot(s)
-        || indexed(s, "mob.inventory.", 8)
-        || indexed(s, "player.crafting.", 4)
-        || matches!(s, "armor.body" | "player.cursor" | "contents" | "saddle")
+/// The slot names of a version: the single slots, and the numbered ones by prefix and count.
+/// `SlotArgument` before 1.20.5, `SlotRanges` from it.
+pub struct Slots {
+    pub names: &'static [&'static str],
+    pub numbered: &'static [(&'static str, u32)],
+}
+
+pub fn slots(data: &VersionData) -> Slots {
+    const NAMES_1_20_4: &[&str] = &[
+        "weapon", "weapon.mainhand", "weapon.offhand", "armor.head", "armor.chest", "armor.legs", "armor.feet", "horse.saddle",
+        "horse.armor", "horse.chest",
+    ];
+    const NAMES_1_20_5: &[&str] = &[
+        "contents", "weapon", "weapon.mainhand", "weapon.offhand", "armor.head", "armor.chest", "armor.legs", "armor.feet",
+        "armor.body", "horse.saddle", "horse.chest", "player.cursor",
+    ];
+    const NAMES_1_21_5: &[&str] = &[
+        "contents", "weapon", "weapon.mainhand", "weapon.offhand", "armor.head", "armor.chest", "armor.legs", "armor.feet",
+        "armor.body", "saddle", "horse.chest", "player.cursor",
+    ];
+    const NUMBERED_1_20_4: &[(&str, u32)] =
+        &[("container.", 54), ("hotbar.", 9), ("inventory.", 27), ("enderchest.", 27), ("villager.", 8), ("horse.", 15)];
+    const NUMBERED_1_20_5: &[(&str, u32)] =
+        &[("container.", 54), ("hotbar.", 9), ("inventory.", 27), ("enderchest.", 27), ("villager.", 8), ("horse.", 15), ("player.crafting.", 4)];
+    const NUMBERED_26_1: &[(&str, u32)] =
+        &[("container.", 54), ("hotbar.", 9), ("inventory.", 27), ("enderchest.", 27), ("mob.inventory.", 8), ("horse.", 15), ("player.crafting.", 4)];
+    if !data.at_least(&[1, 20, 5]) {
+        Slots { names: NAMES_1_20_4, numbered: NUMBERED_1_20_4 }
+    } else if !data.at_least(&[1, 21, 5]) {
+        Slots { names: NAMES_1_20_5, numbered: NUMBERED_1_20_5 }
+    } else if !data.at_least(&[26, 1]) {
+        Slots { names: NAMES_1_21_5, numbered: NUMBERED_1_20_5 }
+    } else {
+        Slots { names: NAMES_1_21_5, numbered: NUMBERED_26_1 }
+    }
+}
+
+fn is_slot(s: &str, data: &VersionData) -> bool {
+    let slots = slots(data);
+    slots.names.contains(&s) || slots.numbered.iter().any(|(prefix, count)| indexed(s, prefix, *count))
+}
+
+/// A slot, or a group of the numbered slots, the weapon slots or the armor slots (`container.*`).
+fn is_slot_range(s: &str, data: &VersionData) -> bool {
+    is_slot(s, data)
+        || s.strip_suffix('*').is_some_and(|group| {
+            matches!(group, "weapon." | "armor.") || slots(data).numbered.iter().any(|(prefix, _)| *prefix == group)
+        })
 }
 
 /// `slot_source`: a slot range, else a slot source as `ResourceOrIdArgument` reads it.
 pub fn slot_source(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
     let start = r.pos;
-    if is_slot_range(r.read_word()) {
+    if is_slot_range(r.read_word(), cx.data) {
         return Ok(());
     }
     r.pos = start;
@@ -121,7 +161,7 @@ pub fn slot_source(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
 /// `ResourceOrIdArgument`: an id of the registry, or the element written inline in SNBT.
 pub fn resource_or_id(r: &mut Reader, cx: &mut ArgCtx, registry: &str) -> PResult<()> {
     if !r.peek().is_some_and(super::is_allowed_in_resource_location) {
-        return super::nbt::parse_tag(r).map(|_| ());
+        return super::nbt::parse_tag(r, super::nbt::modern(cx.data)).map(|_| ());
     }
     let (start, id) = read_resource_location(r)?;
     let (s, e) = (r.offset_of(start), r.offset());
@@ -157,32 +197,12 @@ fn indexed(s: &str, prefix: &str, count: u32) -> bool {
         .is_some_and(|n| n < count)
 }
 
-fn is_slot(s: &str) -> bool {
-    indexed(s, "container.", 54)
-        || indexed(s, "hotbar.", 9)
-        || indexed(s, "inventory.", 27)
-        || indexed(s, "enderchest.", 27)
-        || indexed(s, "villager.", 8)
-        || indexed(s, "horse.", 15)
-        || matches!(
-            s,
-            "weapon"
-                | "weapon.mainhand"
-                | "weapon.offhand"
-                | "armor.head"
-                | "armor.chest"
-                | "armor.legs"
-                | "armor.feet"
-                | "horse.saddle"
-                | "horse.armor"
-                | "horse.chest"
-        )
-}
 
-/// A message: plain text in which `@p`, `@a`, `@r`, `@s` and `@e` start selectors.
+/// A message: plain text in which `@p`, `@a`, `@r`, `@s`, `@e` and, from 1.21, `@n` start selectors.
 pub fn message(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
     while r.can_read() {
-        if r.peek() == Some(b'@') && matches!(r.peek_at(1), Some(b'p' | b'a' | b'r' | b's' | b'e')) {
+        let nearest = cx.data.at_least(&[1, 21]) && r.peek_at(1) == Some(b'n');
+        if r.peek() == Some(b'@') && (nearest || matches!(r.peek_at(1), Some(b'p' | b'a' | b'r' | b's' | b'e'))) {
             entity::selector(r, cx)?;
         } else {
             r.skip();

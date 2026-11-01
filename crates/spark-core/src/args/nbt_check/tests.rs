@@ -36,13 +36,13 @@ fn describe(effects: &[Effect]) -> Vec<String> {
 }
 
 fn value(settings: &str, src: &str, target: Option<&Target>) -> Vec<String> {
-    let node = parse_tag(&mut Reader::new(src, 0)).unwrap();
+    let node = parse_tag(&mut Reader::new(src, 0), false).unwrap();
     let config = Config::from_settings(settings).unwrap();
     describe(&check_value(data(), &config, &node, target))
 }
 
 fn path(settings: &str, src: &str, target: Option<&Target>) -> Vec<String> {
-    let nodes = parse_path(&mut Reader::new(src, 0)).unwrap();
+    let nodes = parse_path(&mut Reader::new(src, 0), false).unwrap();
     let config = Config::from_settings(settings).unwrap();
     describe(&check_path(data(), &config, &nodes, target))
 }
@@ -261,6 +261,22 @@ fn quotes_of_keys_and_values() {
     assert!(value(NBT_RULES, "{Team:x}", Some(&pig)).is_empty());
     assert!(value(NBT_RULES, "{Team:''}", Some(&pig)).is_empty());
     assert!(value(NBT_RULES, "{Team:'a\"b'}", Some(&pig)).iter().all(|d| !d.contains("preferable")));
+}
+
+#[test]
+fn the_rules_apply_alike_to_the_snbt_of_1_21_5() {
+    let modern = |src: &str| {
+        let node = parse_tag(&mut Reader::new(src, 0), true).unwrap();
+        let config = Config::from_settings(NBT_RULES).unwrap();
+        describe(&check_value(crate::data::for_version("1.21.5").unwrap(), &config, &node, Some(&entity("pig"))))
+    };
+    let keys = modern("{\"Silent\":1b,'Glowing':1b}");
+    assert_eq!(keys.len(), 3, "{keys:?}");
+    assert!(keys[0].starts_with(&format!("warning 1-9 Expected an unquoted string but got {} (rule: {})", q("\""), q("nbtCompoundKeyQuote"))));
+    assert!(keys[2].ends_with(&format!("Double quote ({}) is preferable here (rule: {})", q("\""), q("nbtCompoundKeyQuoteType"))));
+    assert_eq!(modern("{Team:'x'}").len(), 2);
+    // the forms that 1.21.5 adds are neither strings nor quoted keys
+    assert!(modern("{Silent: bool(1), Air: 0x1Fs, UUID: uuid(\"f81d4fae-7dec-11d0-a765-00a0c91e6bf6\")}").is_empty());
 }
 
 #[test]

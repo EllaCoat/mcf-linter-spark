@@ -28,14 +28,30 @@ pub enum Category {
     Entity,
     Block,
     Item,
+    /// The value of an item component (1.20.5), by component type.
+    DataComponent,
+    /// The value of an item predicate's `~` test, by predicate type.
+    ComponentPredicate,
+    /// The options of a particle (1.20.5), by particle type.
+    Particle,
+    /// A text component in SNBT (1.21.5).
+    Text,
+    /// A text style in SNBT (1.21.5).
+    Style,
 }
 
 impl Category {
+    /// The dispatcher of the category's types, or the one type of `Text` and `Style`.
     pub fn registry(self) -> &'static str {
         match self {
             Category::Entity => "minecraft:entity",
             Category::Block => "minecraft:block",
             Category::Item => "minecraft:item",
+            Category::DataComponent => "minecraft:data_component",
+            Category::ComponentPredicate => "minecraft:data_component_predicate",
+            Category::Particle => "minecraft:particle",
+            Category::Text => "::java::util::text::Text",
+            Category::Style => "::java::util::text::TextStyle",
         }
     }
 }
@@ -63,6 +79,9 @@ impl Target {
 /// entries merged when the id is not known.
 fn root_type<'d>(doc: &'d McDoc, target: &Target) -> &'d Ty {
     let registry = target.category.registry();
+    if matches!(target.category, Category::Text | Category::Style) {
+        return doc.types.get(registry).unwrap_or(&ANY);
+    }
     match &target.id {
         Some(id) => doc.dispatchers.get(registry).and_then(|m| m.get(strip_minecraft(id)).or_else(|| m.get("%unknown"))).unwrap_or(&ANY),
         None => doc.merged(registry).unwrap_or(&ANY),
@@ -90,14 +109,34 @@ type Stack<'n> = Vec<(&'n NbtNode, Option<&'n str>)>;
 
 /// Checks a parsed tag. `target` is `None` for an NBT without a schema.
 pub fn check_value(data: &VersionData, config: &Config, node: &NbtNode, target: Option<&Target>) -> Vec<Effect> {
-    let checker = Checker { whole: target.is_some_and(|t| t.whole), ..Checker::new(data, config) };
+    // A component, a predicate value, particle options and a text component may be any tag, not
+    // only a compound.
+    let decoded = target.is_some_and(|t| !matches!(t.category, Category::Entity | Category::Block | Category::Item));
+    let checker = Checker { whole: target.is_some_and(|t| t.whole), decoded, ..Checker::new(data, config) };
     let mut out = Vec::new();
     let mut stack = vec![(node, None)];
     let alts = match target {
         Some(t) => checker.r.resolve(root_type(&data.mcdoc, t), &checker.r.empty, &stack, false, 0),
         None => Vec::new(),
     };
-    checker.check_root(&mut out, &mut stack, &alts, target.is_some_and(|t| t.predicate));
+    match target {
+        Some(t) if decoded => {
+            checker.parse_pass(&mut out, &mut stack, &alts);
+            checker.validate(&mut out, &mut stack, &alts, t.predicate);
+        }
+        _ => checker.check_root(&mut out, &mut stack, &alts, target.is_some_and(|t| t.predicate)),
+    }
+    out
+}
+
+/// `Unit.CODEC`, which reads the value of a test that an item has a component: any compound.
+pub fn check_unit(node: &NbtNode) -> Vec<Effect> {
+    let mut out = Vec::new();
+    let kind = kind_of(&node.value);
+    if kind != NbtKind::Compound {
+        let message = format!("Expected {} but got {}", NbtKind::Compound.article_name(), kind.article_name());
+        emit(&mut out, node.start, node.end, Severity::Error, "nbtTypeCheck", message);
+    }
     out
 }
 
@@ -213,6 +252,10 @@ fn emit(out: &mut Sink, start: u32, end: u32, severity: Severity, code: &'static
 
 fn diag_count(out: &[Effect]) -> usize {
     out.iter().filter(|e| matches!(e, Effect::Diag(_))).count()
+}
+
+fn error_count(out: &[Effect]) -> usize {
+    out.iter().filter(|e| matches!(e, Effect::Diag(d) if d.severity == Severity::Error)).count()
 }
 
 /// `punc.quote`.
@@ -384,6 +427,23 @@ impl NbtKind {
     }
 }
 
+/// Whether an alternative has the tag's shape, so that what it reports is more than the type.
+fn fits(node: &NbtNode, alt: &Alt) -> bool {
+    let kind = kind_of(&node.value);
+    match alt {
+        Alt::Any => true,
+        Alt::Struct { .. } => kind == NbtKind::Compound,
+        Alt::Leaf(ty, ..) => match ty {
+            Ty::List { .. } | Ty::Tuple(_) => kind == NbtKind::List,
+            Ty::String { .. } => kind == NbtKind::String,
+            Ty::Array { kind: k, .. } => kind == NbtKind::array(*k),
+            Ty::Number { kind: k, .. } => kind == NbtKind::number(*k),
+            Ty::Boolean => kind == NbtKind::Byte,
+            _ => false,
+        },
+    }
+}
+
 fn kind_of(v: &NbtValue) -> NbtKind {
     match v {
         NbtValue::Byte { .. } => NbtKind::Byte,
@@ -487,11 +547,15 @@ struct Checker<'a> {
     modify: bool,
     /// `Target::whole`.
     whole: bool,
+    /// The game decodes the tag with a codec when it loads the command (a component, a particle's
+    /// options, a text component in SNBT), so a tag of another shape or without a required key
+    /// does not load.
+    decoded: bool,
 }
 
 impl<'a> Checker<'a> {
     fn new(data: &'a VersionData, config: &'a Config) -> Checker<'a> {
-        Checker { r: Resolver::new(&data.mcdoc), data, config, rules: Rules::read(config), modify: false, whole: false }
+        Checker { r: Resolver::new(&data.mcdoc), data, config, rules: Rules::read(config), modify: false, whole: false, decoded: false }
     }
 
     fn check_root<'n>(&self, out: &mut Sink, stack: &mut Stack<'n>, alts: &[Alt<'a>], predicate: bool) {
@@ -663,13 +727,15 @@ impl<'a> Checker<'a> {
     // ---- the type check ----
 
     /// Checks the tag on top of `stack` against its alternatives: the first that reports
-    /// nothing, or else the one that reports the least.
+    /// nothing, or else the one that reports the least, preferring one of the tag's shape. A codec
+    /// reads a decoded tag that has only warnings, so for one the fewest errors come first.
     fn validate<'n>(&self, out: &mut Sink, stack: &mut Stack<'n>, alts: &[Alt<'a>], pred: bool) {
         let Some(alts) = schema(alts) else { return };
         if let [alt] = alts {
             return self.validate_one(out, stack, alt, pred);
         }
-        let mut best: Option<Sink> = None;
+        let node = stack.last().expect("a tag to check").0;
+        let mut best: Option<(Sink, bool)> = None;
         for alt in alts {
             let mut child = Vec::new();
             self.validate_one(&mut child, stack, alt, pred);
@@ -677,11 +743,20 @@ impl<'a> Checker<'a> {
                 out.extend(child);
                 return;
             }
-            if best.as_ref().is_none_or(|b| diag_count(&child) < diag_count(b)) {
-                best = Some(child);
+            let fit = fits(node, alt);
+            let better = |(b, b_fit): &(Sink, bool)| {
+                let (n, m) = (diag_count(&child), diag_count(b));
+                if self.decoded {
+                    let (e, f) = (error_count(&child), error_count(b));
+                    return e < f || e == f && (fit && !b_fit || fit == *b_fit && n < m);
+                }
+                n < m || n == m && fit && !b_fit
+            };
+            if best.as_ref().is_none_or(better) {
+                best = Some((child, fit));
             }
         }
-        out.extend(best.unwrap_or_default());
+        out.extend(best.map(|(b, _)| b).unwrap_or_default());
     }
 
     fn validate_one<'n>(&self, out: &mut Sink, stack: &mut Stack<'n>, alt: &Alt<'a>, pred: bool) {
@@ -785,9 +860,9 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The modified Spyglass reports the keys that a whole value lacks.
+    /// The modified Spyglass reports the keys that a whole value lacks, and a decoded tag lacks none.
     fn check_required(&self, out: &mut Sink, node: &NbtNode, fields: &[(&'a Field, Rc<Scope<'a>>)], pred: bool) {
-        if !self.config.spyglass || !self.whole || pred {
+        if pred || !(self.decoded || self.config.spyglass && self.whole) {
             return;
         }
         let NbtValue::Compound(entries) = &node.value else { return };
@@ -811,6 +886,18 @@ impl<'a> Checker<'a> {
         let loosely = strictly
             || (actual == NbtKind::Int
                 && matches!(expected, NbtKind::Byte | NbtKind::Short | NbtKind::Long | NbtKind::Float | NbtKind::Double));
+        // `NbtOps` reads any number as a number, and a list or an array as a list.
+        let shape = |k: NbtKind| match k {
+            k if number(k) => 0,
+            NbtKind::String => 1,
+            NbtKind::Compound => 2,
+            _ => 3,
+        };
+        if self.decoded && shape(actual) != shape(expected) {
+            let message = format!("Expected {} but got {}", expected.article_name(), actual.article_name());
+            emit(out, node.start, node.end, Severity::Error, "nbtTypeCheck", message);
+            return false;
+        }
         if !loosely || ((pred || self.rules.type_strict) && !strictly) {
             let message = format!(
                 "Expected {} but got {} (rule: {})",

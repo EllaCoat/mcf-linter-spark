@@ -1,4 +1,5 @@
-//! JSON text components (`minecraft:component`) and styles (`minecraft:style`).
+//! JSON text components (`minecraft:component`) and styles (`minecraft:style`). From 1.21.5 both
+//! are SNBT, checked against the text types of vanilla-mcdoc instead.
 //!
 //! 1.20.4 reads one value with Gson's strict `JsonReader` (`ParserUtils.parseJson`)
 //! and decodes it with `ComponentSerialization.CODEC` / `Style.Serializer.CODEC`
@@ -6,21 +7,34 @@
 //! follows Gson's syntax and keeps spans, `Checker` applies the codec rules and
 //! reports the references inside the component.
 
-use super::{ArgCtx, basic, entity, read_resource_location};
+use super::nbt_check::{Category, Target};
+use super::{ArgCtx, basic, entity, nbt, read_resource_location};
 use crate::diag::{ParseError, Severity};
 use crate::facts::kind;
 use crate::json::{Json, Node, parse_value};
 use crate::reader::{PResult, Reader};
 
 pub fn component(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
+    if nbt::modern(cx.data) {
+        return snbt(r, cx, Category::Text);
+    }
     run(r, cx, "chat component", |ck, node| ck.component(node))
 }
 
 pub fn style(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
+    if nbt::modern(cx.data) {
+        return snbt(r, cx, Category::Style);
+    }
     run(r, cx, "style", |ck, node| match &node.json {
         Json::Object(fields) => ck.style_fields(fields),
         _ => fail(node, "Not a JSON object"),
     })
+}
+
+fn snbt(r: &mut Reader, cx: &mut ArgCtx, category: Category) -> PResult<()> {
+    let node = nbt::parse_tag(r, true)?;
+    nbt::check(cx, &node, Some(&Target::new(category, None)));
+    Ok(())
 }
 
 fn run(r: &mut Reader, cx: &mut ArgCtx, what: &str, check: impl FnOnce(&mut Checker, &Node) -> Check) -> PResult<()> {

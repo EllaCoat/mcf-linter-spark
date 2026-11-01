@@ -276,9 +276,10 @@ impl<'a> Walker<'a, '_> {
             Parser::Operation => self.values(&["=", "+=", "-=", "*=", "/=", "%=", "<", ">", "><"], partial, pos),
             Parser::ObjectiveCriteria => self.values(args::basic::SIMPLE_CRITERIA, partial, pos),
             Parser::ScoreboardSlot => self.values(&["list", "sidebar", "below_name"], partial, pos),
-            Parser::ItemSlot | Parser::ItemSlots => self.values(ITEM_SLOTS, partial, pos),
+            Parser::ItemSlot => self.slots(partial, pos, false),
+            Parser::ItemSlots => self.slots(partial, pos, true),
             Parser::SlotSource => {
-                self.values(ITEM_SLOTS, partial, pos);
+                self.slots(partial, pos, true);
                 if let Some(k) = self.probe(parser, name, path, values) {
                     self.symbol(k, partial, pos);
                 }
@@ -300,7 +301,7 @@ impl<'a> Walker<'a, '_> {
             Parser::BlockPredicate => self.block(partial, pos, true),
             Parser::ItemStack => self.item(partial, pos, false),
             Parser::ItemPredicate => self.item(partial, pos, true),
-            Parser::Particle => self.registry("minecraft:particle_type", partial, pos),
+            Parser::Particle => self.particle(partial, pos),
             Parser::Function => match partial.strip_prefix('#') {
                 Some(rest) => self.tag_ids(&self.source.symbols(kind::FUNCTION_TAG), rest, pos + 1, kind::FUNCTION_TAG),
                 None => self.ids(&self.source.symbols(kind::FUNCTION), partial, pos, kind::FUNCTION),
@@ -322,6 +323,10 @@ impl<'a> Walker<'a, '_> {
                 if let Some(k) = self.probe(parser, name, path, values) {
                     self.symbol(k, partial, pos);
                 }
+            }
+            Parser::Component | Parser::Style if args::nbt::modern(self.data) => {
+                let category = if matches!(parser, Parser::Component) { NbtCategory::Text } else { NbtCategory::Style };
+                self.compound(Some(&Target::new(category, None)), partial, pos);
             }
             Parser::NbtCompoundTag => {
                 let target = self.nbt_target(args::nbt::compound_target, name, path, values);
@@ -441,6 +446,30 @@ impl<'a> Walker<'a, '_> {
         self.ids(&ids, partial, pos, short);
     }
 
+    /// The slot names of the version, the numbered ones by their prefix; with `groups`, the
+    /// groups of slots (`container.*`) too.
+    fn slots(&mut self, partial: &str, pos: usize, groups: bool) {
+        let slots = args::basic::slots(self.data);
+        let mut names: Vec<String> = slots.names.iter().map(|s| s.to_string()).collect();
+        names.extend(slots.numbered.iter().map(|(prefix, _)| prefix.to_string()));
+        if groups {
+            names.extend(slots.numbered.iter().map(|(prefix, _)| format!("{prefix}*")));
+            names.extend(["weapon.*".to_string(), "armor.*".to_string()]);
+        }
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        self.values(&names, partial, pos);
+    }
+
+    fn particle(&mut self, partial: &str, pos: usize) {
+        if self.data.at_least(&[1, 20, 5])
+            && let Some(brace) = partial.find('{')
+        {
+            let target = Target::new(NbtCategory::Particle, Some(full_id(&partial[..brace])));
+            return self.compound(Some(&target), &partial[brace..], pos + brace);
+        }
+        self.registry("minecraft:particle_type", partial, pos);
+    }
+
     fn registry(&mut self, registry: &str, partial: &str, pos: usize) {
         let ids: Vec<String> = self.data.registries.get(registry).map(|s| s.iter().cloned().collect()).unwrap_or_default();
         self.ids(&ids, partial, pos, registry.strip_prefix("minecraft:").unwrap_or(registry));
@@ -494,6 +523,9 @@ impl<'a> Walker<'a, '_> {
     }
 
     fn item(&mut self, partial: &str, pos: usize, predicate: bool) {
+        if self.data.at_least(&[1, 20, 5]) {
+            return self.item_components(partial, pos, predicate);
+        }
         if let Some(brace) = partial.find('{') {
             if !partial.starts_with('#') {
                 let id = full_id(&partial[..brace]);
@@ -510,10 +542,67 @@ impl<'a> Walker<'a, '_> {
         self.registry("minecraft:item", partial, pos);
     }
 
+    /// An item stack or predicate of 1.20.5 and later: the item, then the component (or
+    /// predicate) being typed inside `[...]`, or its SNBT value after `=` (`~`).
+    fn item_components(&mut self, partial: &str, pos: usize, predicate: bool) {
+        let Some(open) = partial.find('[') else {
+            if predicate && let Some(rest) = partial.strip_prefix('#') {
+                let mut tags = self.source.symbols(kind::ITEM_TAG);
+                tags.extend(self.data.tags.get("item").into_iter().flatten().cloned());
+                return self.tag_ids(&tags, rest, pos + 1, kind::ITEM_TAG);
+            }
+            if predicate {
+                self.values(&["*"], partial, pos);
+            }
+            return self.registry("minecraft:item", partial, pos);
+        };
+        let separators: &[u8] = if predicate { b",|" } else { b"," };
+        let (mut depth, mut quote, mut seg_start) = (0, None, open + 1);
+        for (i, b) in partial.bytes().enumerate().skip(open + 1) {
+            match (quote, b) {
+                (Some(q), _) if b == q => quote = None,
+                (Some(_), _) => {}
+                (None, b'"' | b'\'') => quote = Some(b),
+                (None, b'{' | b'[') => depth += 1,
+                (None, b'}' | b']') => depth -= 1,
+                (None, _) if depth == 0 && separators.contains(&b) => seg_start = i + 1,
+                _ => {}
+            }
+        }
+        if depth < 0 {
+            return;
+        }
+        let seg = partial[seg_start..].trim_start();
+        let seg = seg.strip_prefix('!').unwrap_or(seg);
+        let seg_pos = pos + partial.len() - seg.len();
+        let predicates = if self.data.at_least(&[1, 21, 5]) { "minecraft:data_component_predicate_type" } else { "minecraft:item_sub_predicate_type" };
+        match seg.find(['=', '~']) {
+            Some(op) => {
+                let value = seg[op + 1..].trim_start();
+                if value.starts_with('{') {
+                    let category = if &seg[op..=op] == "~" { NbtCategory::ComponentPredicate } else { NbtCategory::DataComponent };
+                    let target = Target::new(category, Some(full_id(seg[..op].trim_end())));
+                    self.compound(Some(&target), value, pos + partial.len() - value.len());
+                }
+            }
+            None => {
+                self.registry("minecraft:data_component_type", seg, seg_pos);
+                if predicate {
+                    self.registry(predicates, seg, seg_pos);
+                    self.ids(&["minecraft:count".to_string()], seg, seg_pos, "data_component_type");
+                }
+            }
+        }
+    }
+
     fn selector(&mut self, partial: &str, pos: usize, players_only: bool) {
         let Some(open) = partial.find('[') else {
             if partial.is_empty() || partial.starts_with('@') {
-                let types: &[&str] = if players_only { &["@a", "@p", "@r", "@s"] } else { &["@a", "@e", "@p", "@r", "@s"] };
+                let types: &[&str] = match (players_only, self.data.at_least(&[1, 21])) {
+                    (true, _) => &["@a", "@p", "@r", "@s"],
+                    (false, false) => &["@a", "@e", "@p", "@r", "@s"],
+                    (false, true) => &["@a", "@e", "@n", "@p", "@r", "@s"],
+                };
                 for t in types {
                     if starts_with_ignore_case(t, partial) {
                         self.push(t, pos, Category::Selector, None);
@@ -845,12 +934,6 @@ pub fn collect_storage_paths(text: &str, out: &mut HashMap<String, BTreeSet<Stri
     }
 }
 
-const ITEM_SLOTS: &[&str] = &[
-    "weapon", "weapon.mainhand", "weapon.offhand", "armor.head", "armor.chest", "armor.legs", "armor.feet",
-    "horse.saddle", "horse.armor", "horse.chest", "container.", "hotbar.", "inventory.", "enderchest.", "villager.",
-    "horse.",
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1053,6 +1136,30 @@ mod tests {
         assert!(has("setblock ~ ~ ~ chest{Ite", "Items:", 21));
         assert!(has("summon armor_stand ~ ~ ~ {ArmorItems:[{},{id:\"stone\",tag:{Dam", "Damage:", 58));
         assert!(has("data modify entity @s ArmorItems[0].", "Count", 36));
+    }
+
+    #[test]
+    fn item_components_and_particle_options_from_1_20_5() {
+        assert!(has_in("1.20.5", "give @s diamond_sword[dam", "damage", 22));
+        assert!(has_in("26.3", "give @s diamond_sword[damage=1, !enchan", "enchantments", 33));
+        assert!(has_in("26.3", "give @s diamond_sword[enchantments={levels:{}},custom_data={}, max_dam", "max_damage", 63));
+        assert!(has_in("1.20.5", "give @s diamond_sword[enchantments={lev", "levels:", 36));
+        assert!(!has_in("26.3", "give @s diamond_sword{Dam", "Damage:", 22));
+        assert!(has_in("26.3", "clear @s *[dam", "damage", 11));
+        assert!(has_in("26.3", "clear @s *[custom_data|cou", "count", 23));
+        assert!(has_in("26.3", "clear @s *[damage~{dur", "durability:", 19));
+        assert!(has_in("1.20.5", "clear @s *[damage~{dur", "durability:", 19));
+        assert!(has_in("26.3", "clear @s ", "*", 9));
+        assert!(has_in("26.3", "particle dust{sc", "scale:", 14));
+        assert!(has_in("26.3", "particle du", "dust", 9));
+    }
+
+    #[test]
+    fn text_component_keys_from_1_21_5() {
+        assert!(has_in("1.21.5", "tellraw @a {te", "text:", 12));
+        assert!(has_in("26.3", "tellraw @a [\"a\",{text:\"b\",bo", "bold:", 26));
+        assert!(has_in("26.3", "scoreboard objectives modify o numberformat styled {co", "color:", 52));
+        assert!(!has_in("1.21.4", "tellraw @a {te", "text:", 12));
     }
 
     #[test]
