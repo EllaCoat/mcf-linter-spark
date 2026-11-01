@@ -664,3 +664,11 @@ fn a_path_filter_past_the_check_limit_is_checked_in_part_with_a_warning() {
     assert!(!limited(describe(&check_path(data(), &config, &nodes, Some(&pig)))));
     assert!(limited(describe(&walk_path(data(), &config, &steps(&nodes), Some(&pig), CheckLimit::new(0)))));
 }
+
+#[test]
+fn duplicate_keys_of_a_large_compound_are_found_in_linear_time() {
+    let keys: Vec<String> = (0..20_000).map(|i| format!("k{i}:1b")).collect();
+    let found = value("{}", &format!("{{{},k0:1b}}", keys.join(",")), Some(&entity("pig")));
+    assert_eq!(found.iter().filter(|d| d.contains("Duplicate key")).count(), 1);
+    assert_eq!(found.iter().filter(|d| d.contains("Unknown key")).count(), 20_000);
+}

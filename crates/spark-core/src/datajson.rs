@@ -6,7 +6,7 @@
 //! accepted.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::data::VersionData;
@@ -270,9 +270,10 @@ impl<'d> Checker<'d> {
         open: bool,
         out: &mut Out,
     ) {
-        for (i, (name, value)) in members.iter().enumerate() {
+        let mut seen = HashSet::new();
+        for (name, value) in members {
             let key_span = value.key.unwrap_or((value.start, value.start));
-            if members[..i].iter().any(|(other, _)| other == name) {
+            if !seen.insert(name.as_str()) {
                 out.problem(key_span, Severity::Warning, "jsonDuplicateKey", format!("Duplicate key “{name}”; the last one is used"));
             }
             match self.r.field(fields, name, stack) {
@@ -732,6 +733,13 @@ mod tests {
         let title = (0..24).fold(r#"{"text": "a"}"#.to_string(), |inner, _| format!(r#"{{"text": "a", "separator": {inner}}}"#));
         let separators = format!(r#"{{"criteria": {{"a": {{"trigger": "minecraft:tick"}}}}, "display": {{"icon": {{"item": "minecraft:stone"}}, "title": {title}, "description": "a"}}}}"#);
         assert_eq!(run_in("1.20.4", "advancement", &separators), ["jsonUnknownKey Unknown key “separator”"]);
+    }
+
+    #[test]
+    fn duplicate_keys_of_a_large_object_are_found_in_linear_time() {
+        let members: Vec<String> = (0..20_000).map(|i| format!(r#""c{i}": {{"trigger": "minecraft:tick"}}"#)).collect();
+        let text = format!(r#"{{"criteria": {{{}, "c0": {{"trigger": "minecraft:tick"}}}}}}"#, members.join(", "));
+        assert_eq!(run("advancement", &text), ["jsonDuplicateKey Duplicate key “c0”; the last one is used"]);
     }
 
     #[test]

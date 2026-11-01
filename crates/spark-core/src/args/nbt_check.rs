@@ -9,7 +9,7 @@
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use serde_json::Value;
@@ -678,13 +678,14 @@ impl<'a> Checker<'a> {
         let node = stack.last().expect("a tag to check").0;
         match &node.value {
             NbtValue::Compound(entries) => {
-                for (i, e) in entries.iter().enumerate() {
+                let mut seen = HashSet::new();
+                for e in entries {
                     self.quote_problems(out, &self.rules.key_quote, e.key_quote, &e.key, e.key_start, e.key_end);
                     let (types, named) = self.field_types(alts, &e.key, stack);
                     if !named {
                         self.check_naming(out, e);
                     }
-                    if entries[..i].iter().any(|p| p.key == e.key) {
+                    if !seen.insert(e.key.as_str()) {
                         let message = format!("Duplicate key {}", quoted(&e.key));
                         emit(out, e.key_start, e.key_end, Severity::Warning, "nbtDuplicateKey", message);
                     }
@@ -921,12 +922,14 @@ impl<'a> Checker<'a> {
         open: bool,
         pred: bool,
     ) {
-        for (i, first) in entries.iter().enumerate() {
+        let last: HashMap<&str, usize> = entries.iter().enumerate().map(|(i, e)| (e.key.as_str(), i)).collect();
+        let mut seen = HashSet::new();
+        for first in entries {
             // `Object.keys` lists a repeated key once, with the last value and the last key's range.
-            if entries[..i].iter().any(|p| p.key == first.key) {
+            if !seen.insert(first.key.as_str()) {
                 continue;
             }
-            let Some(entry) = entries.iter().rev().find(|e| e.key == first.key) else { continue };
+            let entry = &entries[last[first.key.as_str()]];
             match self.r.field(fields, &entry.key, stack) {
                 Some((ty, scope, _)) => {
                     stack.push((&entry.value, Some(&entry.key)));
