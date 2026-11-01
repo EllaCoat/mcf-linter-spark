@@ -101,17 +101,21 @@ GitHub Actions でデータパックを検査する設定例です。
 
 Minecraft のデータは同梱していません。初回の実行で、決まった commit のファイルを `curl` で取得し、ユーザーの cache ディレクトリ（Windows は `%LOCALAPPDATA%`、macOS は `~/Library/Caches`、ほかは `$XDG_CACHE_HOME` か `~/.cache`）の `mcf-linter-spark/<バージョン>-<commit>/` に置きます。各バージョンの commit は [`version.rs`](crates/spark-core/src/version.rs) にあります。
 
-- コマンドツリー、registry、ブロックステート、バニラのリソースと tag の一覧：バージョンごとに、[mcmeta](https://github.com/misode/mcmeta) の `<バージョン>-summary` タグの summary から取得します（約 750 KB、1.20.4 の取得元：`https://raw.githubusercontent.com/misode/mcmeta/c85548aae6f200b4cd823bca81528eedfc790de0/<名前>/data.min.json`）。
+- コマンドツリー、registry、ブロックステート、バニラのリソースと tag の一覧：バージョンごとに、[mcmeta](https://github.com/misode/mcmeta) の `<バージョン>-summary` タグの summary から取得します（約 750 KB、取得元：`https://raw.githubusercontent.com/misode/mcmeta/<commit>/<名前>/data.min.json`）。`<commit>` は `version.rs` にあるそのバージョンの commit（40 文字）です。
 - NBT とデータパックの JSON の型：[vanilla-mcdoc](https://github.com/SpyglassMC/vanilla-mcdoc) の `generated` branch の `symbols.json` から取得します（約 2.7 MB、取得元：`https://raw.githubusercontent.com/SpyglassMC/vanilla-mcdoc/5aab1da2ff00955cdb66f0d6c2a1154ef691a015/symbols.json`）。1 つのファイルにすべてのバージョンの型が入っているので、どのバージョンでも同じ commit のファイルを使います。
 - 環境変数 `MCF_LINTER_SPARK_DATA_DIR` で、`<cache ディレクトリ>/mcf-linter-spark` の代わりの置き場を指定できます。CI の cache から戻したディレクトリや、ネットワークの無い環境でファイルを置いたディレクトリに使います。
-- ネットワークの無い環境では、上の URL のファイルを次の名前で置きます。
+- ネットワークの無い環境では、検査するバージョンのフォルダに、上の URL のファイルを次の名前で置きます。
+  - フォルダ名の `<バージョン>-<commit>` では、`<commit>` の所に commit の先頭 12 文字を書きます。1.20.4 なら `1.20.4-c85548aae6f2`、26.3 なら `26.3-d96c75fec200` です。1.20.3 は 1.20.4 のフォルダを使います。
+  - vanilla-mcdoc のファイルはどのバージョンのフォルダにも同じものを置きます。
 
 ```
-<MCF_LINTER_SPARK_DATA_DIR>/1.20.4-c85548aae6f2/commands.json                    # mcmeta の commands/data.min.json
-<MCF_LINTER_SPARK_DATA_DIR>/1.20.4-c85548aae6f2/registries.json                  # mcmeta の registries/data.min.json
-<MCF_LINTER_SPARK_DATA_DIR>/1.20.4-c85548aae6f2/blocks.json                      # mcmeta の blocks/data.min.json
-<MCF_LINTER_SPARK_DATA_DIR>/1.20.4-c85548aae6f2/vanilla-mcdoc-5aab1da2ff00.json  # vanilla-mcdoc の symbols.json
+<MCF_LINTER_SPARK_DATA_DIR>/<バージョン>-<commit>/commands.json                    # mcmeta の commands/data.min.json
+<MCF_LINTER_SPARK_DATA_DIR>/<バージョン>-<commit>/registries.json                  # mcmeta の registries/data.min.json
+<MCF_LINTER_SPARK_DATA_DIR>/<バージョン>-<commit>/blocks.json                      # mcmeta の blocks/data.min.json
+<MCF_LINTER_SPARK_DATA_DIR>/<バージョン>-<commit>/vanilla-mcdoc-5aab1da2ff00.json  # vanilla-mcdoc の symbols.json
 ```
+
+例えば 26.3 では、`https://raw.githubusercontent.com/misode/mcmeta/d96c75fec200c4580dd75e033a76341521165461/commands/data.min.json` のファイルを `<MCF_LINTER_SPARK_DATA_DIR>/26.3-d96c75fec200/commands.json` として置きます。
 
 ## spyglass.json があるプロジェクト
 
