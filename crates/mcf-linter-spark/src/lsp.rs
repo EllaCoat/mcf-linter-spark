@@ -696,7 +696,7 @@ fn apply_changes(text: &str, changes: Vec<TextDocumentContentChangeEvent>) -> St
 
 /// Keeps the doc's line breaks in Markdown.
 fn markdown_doc(doc: &str) -> String {
-    doc.lines().map(|l| format!("{}  ", l.trim_end())).collect::<Vec<_>>().join("\n")
+    doc.lines().map(|l| format!("{}  ", l.trim_end().replace("![", "&#33;["))).collect::<Vec<_>>().join("\n")
 }
 
 fn to_lsp(project: &Project, fid: FileId) -> Vec<Diagnostic> {
@@ -744,6 +744,12 @@ mod tests {
         ];
         assert_eq!(apply_changes(text, edits), "say あXう\nfunction t:missing\nsay end\n");
         assert_eq!(apply_changes(text, vec![change(None, "whole")]), "whole");
+    }
+
+    #[test]
+    fn an_image_in_a_doc_is_shown_as_a_link_in_the_hover() {
+        assert_eq!(markdown_doc("Spawns a mob ![x](https://example.com/x.png)\n[lib](file:///t.mcfunction)"), "Spawns a mob &#33;[x](https://example.com/x.png)  \n[lib](file:///t.mcfunction)  ");
+        assert_eq!(markdown_doc("\\![x](https://example.com/x.png)"), "\\&#33;[x](https://example.com/x.png)  ");
     }
 
     #[test]
