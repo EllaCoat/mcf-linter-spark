@@ -7,8 +7,11 @@
 //! follows Gson's syntax and keeps spans, `Checker` applies the codec rules and
 //! reports the references inside the component.
 
+use std::collections::HashMap;
+
 use super::nbt_check::{Category, Target};
 use super::{ArgCtx, basic, entity, nbt, read_resource_location};
+use crate::command::Effect;
 use crate::diag::{ParseError, Severity};
 use crate::facts::kind;
 use crate::json::{Json, Node, parse_value, parse_whole_lenient_value};
@@ -50,13 +53,14 @@ fn run(r: &mut Reader, cx: &mut ArgCtx, what: &str, parse: fn(&mut Reader) -> PR
         e.message = format!("Invalid {what}: {}", e.message);
         e
     })?;
-    let mut checker = Checker { cx, base: r.base };
+    let mut checker = Checker { cx, base: r.base, components: Vec::new(), depth: 0 };
     check(&mut checker, &node).map_err(|f| {
         ParseError::new(r.offset_of(f.start), r.offset_of(f.end), format!("Invalid {what}: {}", f.message))
     })
 }
 
 
+#[derive(Clone)]
 struct Fail {
     start: usize,
     end: usize,
@@ -220,10 +224,28 @@ enum HoverAction {
 struct Checker<'c, 'a> {
     cx: &'c mut ArgCtx<'a>,
     base: u32,
+    components: Vec<HashMap<usize, (Check, Vec<Effect>)>>,
+    depth: usize,
 }
 
 impl Checker<'_, '_> {
     fn component(&mut self, node: &Node) -> Check {
+        let key = node as *const Node as usize;
+        let depth = self.depth;
+        if let Some((check, effects)) = self.components.get(depth).and_then(|components| components.get(&key)) {
+            self.cx.effects.extend(effects.iter().cloned());
+            return check.clone();
+        }
+        let mark = self.cx.effects.len();
+        self.depth += 1;
+        let check = self.decode_component(node);
+        self.depth = depth;
+        self.components.resize_with(depth + 1, HashMap::new);
+        self.components[depth].insert(key, (check.clone(), self.cx.effects[mark..].to_vec()));
+        check
+    }
+
+    fn decode_component(&mut self, node: &Node) -> Check {
         match &node.json {
             Json::Str(_) => Ok(()),
             Json::Array(items) => self.component_list(node, items),

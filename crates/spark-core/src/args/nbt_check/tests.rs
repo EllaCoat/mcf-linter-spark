@@ -644,3 +644,23 @@ fn horses_and_llamas_keep_their_armor_and_decor_in_1_20_4() {
     assert!(command("{}", "summon trader_llama ~ ~ ~ {DecorItem:{id:\"minecraft:red_carpet\",Count:1b}}").is_empty());
     assert_eq!(command("{}", "summon pig ~ ~ ~ {ArmorItem:{id:\"minecraft:iron_horse_armor\",Count:1b}}").len(), 1);
 }
+
+#[test]
+fn a_tag_past_the_check_limit_is_checked_in_part_with_a_warning() {
+    let node = parse_tag(&mut Reader::new("{Passengers:[{id:\"minecraft:pig\",Health:1.0f}]}", 0), false).unwrap();
+    let config = Config::default();
+    let pig = entity("pig");
+    let limited = |found: Vec<String>| found.iter().any(|d| d.contains(CHECK_LIMIT_MESSAGE));
+    assert!(!limited(describe(&check_value(data(), &config, &node, Some(&pig)))));
+    assert!(limited(describe(&check_value_with(data(), &config, &node, Some(&pig), CheckLimit::new(1)))));
+}
+
+#[test]
+fn a_path_filter_past_the_check_limit_is_checked_in_part_with_a_warning() {
+    let nodes = parse_path(&mut Reader::new("Passengers[{id:\"minecraft:pig\",Health:1.0f}]", 0), false).unwrap();
+    let config = Config::default();
+    let pig = entity("pig");
+    let limited = |found: Vec<String>| found.iter().any(|d| d.contains(CHECK_LIMIT_MESSAGE));
+    assert!(!limited(describe(&check_path(data(), &config, &nodes, Some(&pig)))));
+    assert!(limited(describe(&walk_path(data(), &config, &steps(&nodes), Some(&pig), CheckLimit::new(0)))));
+}

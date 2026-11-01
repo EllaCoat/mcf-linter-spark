@@ -4,6 +4,7 @@
 //! version are left out while loading. `Resolver` follows the types for a value of data pack
 //! JSON or NBT.
 
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -456,14 +457,52 @@ const NBT_ROOTS: &[&str] = &["::java::world::entity::AnyEntity", "::java::world:
 
 pub static ANY: Ty = Ty::Any;
 
+pub const CHECK_LIMIT_MESSAGE: &str = "Stopped checking this value against the schema: it takes too many steps";
+
+pub struct CheckLimit {
+    left: Cell<usize>,
+    reached: Cell<bool>,
+}
+
+impl CheckLimit {
+    pub fn new(left: usize) -> CheckLimit {
+        CheckLimit { left: Cell::new(left), reached: Cell::new(false) }
+    }
+
+    pub fn for_nodes(nodes: usize) -> CheckLimit {
+        // ponytail: a fixed budget of checks per node; raise it if a value of a real pack stops being checked
+        CheckLimit::new(nodes.saturating_mul(16).saturating_add(4096))
+    }
+
+    pub fn take(&self) -> bool {
+        match self.left.get().checked_sub(1) {
+            Some(left) => {
+                self.left.set(left);
+                true
+            }
+            None => {
+                self.reached.set(true);
+                false
+            }
+        }
+    }
+
+    pub fn reached(&self) -> bool {
+        self.reached.get()
+    }
+}
+
+type Bound<'d> = HashMap<(usize, usize), (Rc<Scope<'d>>, Rc<Scope<'d>>)>;
+
 pub struct Resolver<'d> {
     pub doc: &'d McDoc,
     pub empty: Rc<Scope<'d>>,
+    bound: RefCell<Bound<'d>>,
 }
 
 impl<'d> Resolver<'d> {
     pub fn new(doc: &'d McDoc) -> Resolver<'d> {
-        Resolver { doc, empty: Rc::default() }
+        Resolver { doc, empty: Rc::default(), bound: RefCell::default() }
     }
 
     /// The alternatives of `ty` for the value on top of `stack`. `member`: `ty` describes the
@@ -534,10 +573,12 @@ impl<'d> Resolver<'d> {
                 };
                 match template {
                     Some(Ty::Template { child, params }) => {
-                        let bound = Scope {
-                            params: params.iter().map(|p| p.as_str()).zip(args.iter().map(|a| (a, scope.clone()))).collect(),
-                        };
-                        self.resolve(child, &Rc::new(bound), stack, member, depth + 1)
+                        let key = (ty as *const Ty as usize, Rc::as_ptr(scope) as usize);
+                        let bound = self.bound.borrow_mut().entry(key).or_insert_with(|| {
+                            let params = params.iter().map(|p| p.as_str()).zip(args.iter().map(|a| (a, scope.clone()))).collect();
+                            (scope.clone(), Rc::new(Scope { params }))
+                        }).1.clone();
+                        self.resolve(child, &bound, stack, member, depth + 1)
                     }
                     Some(t) => self.resolve(t, scope, stack, member, depth + 1),
                     None => vec![Alt::Any],

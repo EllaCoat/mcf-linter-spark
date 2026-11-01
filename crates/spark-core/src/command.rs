@@ -253,6 +253,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn items_of_entities_without_an_id_are_checked_in_linear_time() {
+        let items = (0..12).fold("{Items:[{Slot:0b,id:\"minecraft:stone\",bogus:1b}]}".to_string(), |inner, _| {
+            format!("{{Items:[{{Slot:0b,id:\"minecraft:stone\",components:{{\"minecraft:entity_data\":{inner}}}}}]}}")
+        });
+        assert_eq!(diagnostics_in("26.3", &format!("data merge entity @s {items}")), ["Unknown key “bogus”"]);
+        let tags = (0..12).fold("{Items:[{Slot:0b,id:\"minecraft:stone\",Count:1b,bogus:1b}]}".to_string(), |inner, _| {
+            format!("{{Items:[{{Slot:0b,id:\"minecraft:pig_spawn_egg\",Count:1b,tag:{{EntityTag:{inner}}}}}]}}")
+        });
+        assert_eq!(diagnostics_in("1.20.4", &format!("data merge entity @s {tags}")), ["Unknown key “bogus”"]);
+    }
+
+    #[test]
+    fn nested_text_components_are_checked_in_linear_time() {
+        let mut snbt = "{x:1}".to_string();
+        for _ in 0..24 {
+            snbt = format!("{{x:1,extra:[{snbt}]}}");
+        }
+        assert!(!diagnostics_in("26.3", &format!("tellraw @a {snbt}")).is_empty());
+        let separators = (0..24).fold("{text:\"a\"}".to_string(), |inner, _| format!("{{text:\"a\",separator:{inner}}}"));
+        assert_eq!(diagnostics_in("26.3", &format!("tellraw @a {separators}")), ["Unknown key “separator”"]);
+        let mut json = "1".to_string();
+        for _ in 0..40 {
+            json = format!(r#"{{"selector":"x","nbt":"y","separator":{json}}}"#);
+        }
+        assert!(error_in("1.20.4", &format!("tellraw @a {json}")).is_some());
+    }
+
+    #[test]
     fn the_nearest_entity_selector_from_1_21() {
         assert!(error_in("1.20.6", "kill @n").is_some());
         assert_eq!(error_in("1.21", "kill @n[type=zombie]"), None);
