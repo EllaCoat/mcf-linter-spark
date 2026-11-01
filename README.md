@@ -1,20 +1,22 @@
 # mcf-linter-spark
 
-Minecraft: Java Edition 1.20.4 のデータパックの `.mcfunction` と JSON を検査する linter です。Datapack Helper Plus 3.x（DHP）の lint 設定と [IMP-Doc](https://github.com/SpyglassMC/Spyglass/wiki/IMP-Doc) の公開範囲に沿って診断し、CI 用のコマンドと VSCode 拡張機能（language server）の両方で動きます。
+Minecraft: Java Edition 1.20.3〜26.3 のデータパックの `.mcfunction` と JSON を検査する linter です。Datapack Helper Plus 3.x（DHP）の lint 設定と [IMP-Doc](https://github.com/SpyglassMC/Spyglass/wiki/IMP-Doc) の公開範囲に沿って診断し、CI 用のコマンドと VSCode 拡張機能（language server）の両方で動きます。
 
 - 検査するバージョンは設定の `datapack.env.cmdVersion` で指定します。指定が無ければ `spyglass.json` の `env.gameVersion` を使い、どちらも無ければ 1.20.4 です。
-- 指定できるのは 1.20.3〜26.3 のリリースです。1.20.5 以降への対応は作業中です。コマンドの一覧、registry、データパックのディレクトリ名と JSON の型はそのバージョンのものを使います。item の components や 1.21.5 からの SNBT などの新しい書き方は、まだ 1.20.4 の書き方として読みます。
+- 指定できるのは 1.20.3〜26.3 のリリースです。コマンドの一覧と書き方、registry、データパックのディレクトリ名と JSON の種類、NBT と JSON の型は、そのバージョンのものを使います。1.20.3 は 1.20.4 のデータで検査します。
+- バージョンの指定が無いのに、1.21 からの単数形のディレクトリ（`function/` など）があるデータパックでは、コマンドと VSCode 拡張機能がそのことを知らせます。
 
 ## 検査する内容
 
 コマンドと JSON をゲームの規則に合わせて解析し、`.vscode/settings.json` の `datapack.lint.*` を DHP と同じ意味で適用します。
 
-- コマンド：1.20.4 のコマンドツリーに沿って、セレクター、SNBT、NBT パス、ブロックステート、JSON テキスト、マクロ行（`$`）の `$(name)` を検査します。
+- コマンド：指定したバージョンのコマンドツリーに沿って、セレクター、SNBT、NBT パス、ブロックステート、item の components と item predicate、テキスト、マクロ行（`$`）の `$(name)` を検査します。1.21.5 からの新しい SNBT や SNBT のテキストなど、書き方もバージョンに合わせて読みます。
 - 参照：function、function tag、advancement、loot table、predicate、recipe、storage、objective、score holder、team、bossbar、entity tag、ブロックとアイテムの tag、バニラの registry の ID が存在するかを、`strict*Check` の設定と重さに従って調べます。
 - lint の rule：重さを持つ rule（命名規則の `nameOf*`、引用符の `stringQuote`・`nbt*Quote`、`selectorSortKeys`、NBT の `nbtTypeCheck`・`nbtBoolean`・`nbtListLengthCheck` など）を検査します。空白、数値の接尾辞、末尾のカンマといった書式だけの設定は診断しません。
-- NBT：entity、block entity、アイテムの NBT を [vanilla-mcdoc](https://github.com/SpyglassMC/vanilla-mcdoc) の型で検査します。`data get entity @s` のように種類が分からない所では、すべての種類の型を合わせて使います。
+- NBT：entity、block entity、アイテムの NBT と、item の components、particle のオプション、1.21.5 からのテキスト、1.20.5 からコマンドに直接書ける loot table・predicate・item modifier などを [vanilla-mcdoc](https://github.com/SpyglassMC/vanilla-mcdoc) の型で検査します。`data get entity @s` のように種類が分からない所では、すべての種類の型を合わせて使います。
+- components などゲームが読み込む時に型を確かめる値は、形の違い（数・文字列・list・compound の違い）と必須の key の不足を、`nbtTypeCheck` の設定に関わらず error にします。
 - IMP-Doc：`#>` のドキュメントコメント、`@public`・`@api`・`@private`・`@internal`・`@within`、`#declare`・`#define` を読みます。公開範囲が許さない参照は、DHP と同じく未解決として報告します。
-- データパックの JSON：advancement、predicate、loot table、item modifier、recipe、tag、damage type、dimension、dimension type、chat type、trim、worldgen を vanilla-mcdoc の型で検査します。ゲームが読み込めない誤りは error、型に無い key は warning とし、JSON の中のプロジェクトの ID は `strict*Check` の重さで調べます（IMP-Doc の公開範囲は掛かりません）。
+- データパックの JSON：advancement、predicate、loot table、item modifier、recipe、tag、damage type、dimension、dimension type、chat type、trim、worldgen と、1.21 からの enchantment など、そのバージョンのデータパックの種類を vanilla-mcdoc の型で検査します。ゲームが読み込めない誤りは error、型に無い key は warning とし、JSON の中のプロジェクトの ID は `strict*Check` の重さで調べます（IMP-Doc の公開範囲は掛かりません）。
 
 ## インストール
 
@@ -45,7 +47,7 @@ cargo install --git https://github.com/EllaCoat/mcf-linter-spark --locked mcf-li
 
 `.mcfunction` とデータパックの JSON に対して、診断、補完、定義へ移動、参照の検索を提供します。`.mcfunction` では IMP-Doc のホバー表示とコマンドのシグネチャヘルプも使えます。
 
-- 補完：コマンド、セレクター、ブロックステート、バニラとプロジェクトの各種 ID・tag・symbol、JSON の key や値を補完します。プロジェクトの symbol は IMP-Doc で参照できる所でだけ候補に出し、長い ID は `namespace:`、`folder/` と 1 階層ずつ出します。
+- 補完：コマンド、セレクター、ブロックステート、item の components、バニラとプロジェクトの各種 ID・tag・symbol、JSON の key や値を、指定したバージョンに合わせて補完します。プロジェクトの symbol は IMP-Doc で参照できる所でだけ候補に出し、長い ID は `namespace:`、`folder/` と 1 階層ずつ出します。
 - NBT の補完：entity、block entity、アイテムの key とパスに加え、プロジェクトの function（と IMP-Doc の `# @input`・`# @output` の行）が使っている storage のパスを補完します。
 - 定義へ移動・参照の検索：symbol の `#declare` か定義、function のファイルのドキュメントコメントへ移動でき、コマンド・function tag・データパックの JSON・コメントのリンクからの参照を検索できます。
 - コメントのリンク：`# see [the handler](example:handler/damage#L12)` のように function を指す Markdown のリンクから、その function のその行を開けます（IMP-Doc のホバーからも開けます）。存在しない function や行を指すリンクは information（`commentLink`）として報告し、URL など function 以外を指すリンクは読みません。
@@ -86,13 +88,14 @@ GitHub Actions でデータパックを検査する設定例です。
   with:
     path: ~/.cache/mcf-linter-spark
     key: mcf-linter-spark-data-1.20.4-c85548aae6f2-5aab1da2ff00
-- run: cargo install --git https://github.com/EllaCoat/mcf-linter-spark --tag v0.1.1 --locked mcf-linter-spark
+- run: cargo install --git https://github.com/EllaCoat/mcf-linter-spark --tag v0.2.0 --locked mcf-linter-spark
 - run: mcf-linter-spark check . --ignore 'animated_java:**' --format github
 ```
 
 - `--tag` で使う版を固定します。
 - `actions/cache` でバニラのデータを実行の間で残し、取得できない時に CI が落ちるのを防ぎます。cache は job が成功した時に保存されます。
 - key には取得するデータの commit を入れています。データの commit が違うバージョンの mcf-linter-spark では、新しい cache になります。
+- 例の key は 1.20.4 を検査するときのものです。ほかのバージョンでは、`1.20.4-c85548aae6f2` をそのバージョンの cache のフォルダ名（バージョンと、[`version.rs`](crates/spark-core/src/version.rs) にある commit の先頭 12 文字。26.3 なら `26.3-d96c75fec200`）にします。
 
 ## バニラのデータ
 

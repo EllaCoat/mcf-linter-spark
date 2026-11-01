@@ -11,21 +11,29 @@ use super::nbt_check::{Category, Target};
 use super::{ArgCtx, basic, entity, nbt, read_resource_location};
 use crate::diag::{ParseError, Severity};
 use crate::facts::kind;
-use crate::json::{Json, Node, parse_value};
+use crate::json::{Json, Node, parse_value, parse_whole_lenient_value};
 use crate::reader::{PResult, Reader};
 
 pub fn component(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
     if nbt::modern(cx.data) {
         return snbt(r, cx, Category::Text);
     }
-    run(r, cx, "chat component", |ck, node| ck.component(node))
+    run(r, cx, "chat component", parse_value_at_top, |ck, node| ck.component(node))
+}
+
+pub fn lenient_component(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
+    run(r, cx, "chat component", parse_whole_lenient_value, |ck, node| ck.component(node))
+}
+
+fn parse_value_at_top(r: &mut Reader) -> PResult<Node> {
+    parse_value(r, 0)
 }
 
 pub fn style(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
     if nbt::modern(cx.data) {
         return snbt(r, cx, Category::Style);
     }
-    run(r, cx, "style", |ck, node| match &node.json {
+    run(r, cx, "style", parse_value_at_top, |ck, node| match &node.json {
         Json::Object(fields) => ck.style_fields(fields),
         _ => fail(node, "Not a JSON object"),
     })
@@ -37,8 +45,8 @@ fn snbt(r: &mut Reader, cx: &mut ArgCtx, category: Category) -> PResult<()> {
     Ok(())
 }
 
-fn run(r: &mut Reader, cx: &mut ArgCtx, what: &str, check: impl FnOnce(&mut Checker, &Node) -> Check) -> PResult<()> {
-    let node = parse_value(r, 0).map_err(|mut e| {
+fn run(r: &mut Reader, cx: &mut ArgCtx, what: &str, parse: fn(&mut Reader) -> PResult<Node>, check: impl FnOnce(&mut Checker, &Node) -> Check) -> PResult<()> {
+    let node = parse(r).map_err(|mut e| {
         e.message = format!("Invalid {what}: {}", e.message);
         e
     })?;
@@ -115,6 +123,15 @@ fn color(node: &Node) -> Check {
         None => s != "reset" && basic::COLORS.contains(&s),
     };
     if valid { Ok(()) } else { fail(node, format!("Invalid color: {s}")) }
+}
+
+/// `ExtraCodecs.ARGB_COLOR_CODEC` (1.21.4): an int, or a list of four floats.
+fn shadow_color(node: &Node) -> Check {
+    match &node.json {
+        _ if is_bool_or_number(node) => Ok(()),
+        Json::Array(items) if items.len() == 4 && items.iter().all(is_bool_or_number) => Ok(()),
+        _ => fail(node, "Not a number or a list of four numbers"),
+    }
 }
 
 fn click_event(node: &Node) -> Check {
@@ -384,6 +401,11 @@ impl Checker<'_, '_> {
     fn style_fields(&mut self, fields: &Fields) -> Check {
         if let Some(value) = get(fields, "color") {
             color(value)?;
+        }
+        if self.cx.data.at_least(&[1, 21, 4])
+            && let Some(value) = get(fields, "shadow_color")
+        {
+            shadow_color(value)?;
         }
         for key in ["bold", "italic", "underlined", "strikethrough", "obfuscated"] {
             if let Some(value) = get(fields, key)

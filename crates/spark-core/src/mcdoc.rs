@@ -237,7 +237,7 @@ impl McDoc {
         let mut open = false;
         for (_, t) in entries {
             for alt in r.resolve::<()>(t, &r.empty, &[], false, 0) {
-                let Alt::Struct { fields: found, open: o } = alt else { continue };
+                let Alt::Struct { fields: found, open: o, .. } = alt else { continue };
                 open |= o;
                 for (f, _) in found.into_iter().filter(|(f, _)| seen.insert(*f as *const Field)) {
                     match f {
@@ -374,6 +374,40 @@ impl McDoc {
                 }
             }
         }
+        if version::cmp(version, &[1, 20, 5]).is_ge()
+            && version::cmp(version, &[1, 21, 2]).is_lt()
+            && let Some(legacy) = self.types.get("::java::util::particle::TranslucentParticle").cloned()
+        {
+            let color = Ty::Union(vec![legacy, Ty::Number { kind: NumKind::Int, range: None }]);
+            self.types.insert("::java::util::particle::TranslucentParticle".into(), color);
+        }
+        if version::cmp(version, &[26, 1]).is_ge()
+            && let Some(Ty::Struct(fields)) = self.types.get_mut("::java::data::variants::wolf::WolfSounds")
+            && !fields.iter().any(|f| matches!(f, Field::Pair { key: Key::Name(n), .. } if n == "step_sound"))
+        {
+            let ty = Ty::Reference("::java::data::util::SoundEventRef".into());
+            fields.push(Field::Pair { key: Key::Name("step_sound".into()), ty, optional: false, desc: None });
+        }
+        if version::cmp(version, &[26, 3]).is_ge() {
+            let transmuted = match self.types.get("::java::data::recipe::CraftingTransmute") {
+                Some(Ty::Struct(fields)) => fields.iter().find_map(|f| match f {
+                    Field::Pair { key: Key::Name(n), ty, .. } if n == "result" => Some(ty.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            };
+            if let Some(transmuted) = transmuted
+                && let Some(Ty::Struct(fields)) = self.types.get_mut("::java::data::recipe::CraftingSpecialMapExtending")
+            {
+                for f in fields {
+                    if let Field::Pair { key: Key::Name(n), ty, .. } = f
+                        && n == "result"
+                    {
+                        *ty = transmuted.clone();
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -415,8 +449,10 @@ pub enum Alt<'d> {
     Any,
     /// A type that is none of the above, with the `#[id]` of a reference that led to it.
     Leaf(&'d Ty, Rc<Scope<'d>>, Option<&'d IdAttr>),
-    Struct { fields: Vec<(&'d Field, Rc<Scope<'d>>)>, open: bool },
+    Struct { fields: Vec<(&'d Field, Rc<Scope<'d>>)>, open: bool, nbt: bool },
 }
+
+const NBT_ROOTS: &[&str] = &["::java::world::entity::AnyEntity", "::java::world::component::item::BucketEntityData", "::java::world::block::BlockEntityData"];
 
 pub static ANY: Ty = Ty::Any;
 
@@ -441,7 +477,18 @@ impl<'d> Resolver<'d> {
             Ty::Reference(path) => match scope.params.get(path.as_str()) {
                 Some((arg, arg_scope)) => self.resolve(arg, arg_scope, stack, member, depth + 1),
                 None => match self.doc.types.get(path) {
-                    Some(t) => self.resolve(t, &self.empty, stack, member, depth + 1),
+                    Some(t) => {
+                        let alts = self.resolve(t, &self.empty, stack, member, depth + 1);
+                        if !NBT_ROOTS.contains(&path.as_str()) {
+                            return alts;
+                        }
+                        alts.into_iter()
+                            .map(|alt| match alt {
+                                Alt::Struct { fields, open, .. } => Alt::Struct { fields, open, nbt: true },
+                                other => other,
+                            })
+                            .collect()
+                    }
                     None => vec![Alt::Any],
                 },
             },
@@ -505,7 +552,7 @@ impl<'d> Resolver<'d> {
                         Field::Pair { .. } => merged.push((f, scope.clone())),
                         Field::Spread(t) => match self.resolve(t, scope, stack, true, depth + 1).as_slice() {
                             [Alt::Any] => open = true,
-                            [Alt::Struct { fields, open: o }] => {
+                            [Alt::Struct { fields, open: o, .. }] => {
                                 merged.extend(fields.iter().map(|(f, s)| (*f, s.clone())));
                                 open |= o;
                             }
@@ -513,7 +560,7 @@ impl<'d> Resolver<'d> {
                         },
                     }
                 }
-                vec![Alt::Struct { fields: merged, open }]
+                vec![Alt::Struct { fields: merged, open, nbt: false }]
             }
             _ => vec![Alt::Leaf(ty, scope.clone(), None)],
         }

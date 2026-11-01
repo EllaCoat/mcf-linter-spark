@@ -5,6 +5,7 @@
 //! Where the schema cannot be followed (an unknown reference or dispatcher key), the value is
 //! accepted.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::data::VersionData;
@@ -45,7 +46,7 @@ pub fn check(text: &str, reading: Reading, schema: &Ty, doc: &McDoc, data: &Vers
             return Checked { diags: vec![diag], refs: Vec::new() };
         }
     };
-    let checker = Checker { r: Resolver::new(doc), data, text };
+    let checker = Checker::new(doc, data, text);
     let mut stack = vec![(&node, None)];
     let out = checker.value(&mut stack, schema, &checker.r.empty);
     Checked { diags: out.problems, refs: out.refs }
@@ -114,9 +115,14 @@ struct Checker<'d> {
     r: Resolver<'d>,
     data: &'d VersionData,
     text: &'d str,
+    nbt: Cell<u32>,
 }
 
 impl<'d> Checker<'d> {
+    fn new(doc: &'d McDoc, data: &'d VersionData, text: &'d str) -> Checker<'d> {
+        Checker { r: Resolver::new(doc), data, text, nbt: Cell::new(0) }
+    }
+
     fn inside_quotes(&self, (start, end): (usize, usize)) -> (usize, usize) {
         match self.text.as_bytes().get(start) {
             Some(b'"' | b'\'') => (start + 1, end.saturating_sub(1).max(start + 1)),
@@ -134,7 +140,8 @@ impl<'d> Checker<'d> {
         if alts.is_empty() || alts.iter().any(|a| matches!(a, Alt::Any)) {
             return Out::default();
         }
-        let fitting: Vec<&Alt<'d>> = alts.iter().filter(|a| fits(a, node)).collect();
+        let nbt = self.nbt.get() > 0;
+        let fitting: Vec<&Alt<'d>> = alts.iter().filter(|a| fits(a, node, nbt)).collect();
         match fitting.as_slice() {
             [] => {
                 let mut out = Out::default();
@@ -155,7 +162,11 @@ impl<'d> Checker<'d> {
         let node = stack.last().expect("a value to check").0;
         let mut out = Out::default();
         match (alt, &node.json) {
-            (Alt::Struct { fields, open }, Json::Object(members)) => self.object(stack, node, members, fields, *open, &mut out),
+            (Alt::Struct { fields, open, nbt }, Json::Object(members)) => {
+                self.nbt.set(self.nbt.get() + u32::from(*nbt));
+                self.object(stack, node, members, fields, *open, &mut out);
+                self.nbt.set(self.nbt.get() - u32::from(*nbt));
+            }
             (Alt::Leaf(ty, scope, outer_id), json) => match (ty, json) {
                 (Ty::String { len, id, holds }, Json::Str(s)) => {
                     if let Some(len) = len
@@ -298,12 +309,13 @@ pub fn tag_entry_required(entry: &Node) -> bool {
 }
 
 /// Whether the value has the shape of the alternative (and is its literal or enum value).
-fn fits(alt: &Alt, node: &Node) -> bool {
+fn fits(alt: &Alt, node: &Node, nbt: bool) -> bool {
     match (alt, &node.json) {
         (Alt::Any, _) => true,
         (Alt::Struct { .. }, Json::Object(_)) => true,
         (Alt::Leaf(ty, _, outer), json) => match (ty, json) {
             (Ty::Boolean, Json::Bool(_)) => true,
+            (Ty::Boolean, Json::Num(_)) => nbt,
             (Ty::String { .. }, Json::Str(_)) => true,
             (Ty::Number { kind, .. }, Json::Num(v)) => kind.bounds().is_none_or(|(lo, hi)| (lo..=hi).contains(v)),
             (Ty::Literal { value, id }, json) => lit_matches(value, json, *id || outer.is_some()),
@@ -427,7 +439,7 @@ pub fn complete(
     let root = json::parse_partial(text);
     let mut stack: Stack = vec![(&root, None)];
     let Some(spot) = locate(text, &root, offset, &mut stack) else { return Vec::new() };
-    let checker = Checker { r: Resolver::new(doc), data, text };
+    let checker = Checker::new(doc, data, text);
     let mut alts = checker.along(schema, &stack);
     if let Spot::Item { .. } = spot {
         alts = alts
@@ -564,7 +576,7 @@ impl<'d> Checker<'d> {
             for alt in &alts {
                 match (alt, key) {
                     (Alt::Any, _) => return vec![Alt::Any],
-                    (Alt::Struct { fields, open }, Some(name)) => {
+                    (Alt::Struct { fields, open, .. }, Some(name)) => {
                         match self.r.field(fields, name, &stack[..i]) {
                             Some((t, s, _)) => next.push((t, s)),
                             None if *open => return vec![Alt::Any],
@@ -643,7 +655,11 @@ mod tests {
 
     /// `code message` of each diagnostic, then `ref kind id` of each reference.
     fn run(kind: Kind, text: &str) -> Vec<String> {
-        let data = crate::data::for_version("1.20.4").unwrap();
+        run_in("1.20.4", kind, text)
+    }
+
+    fn run_in(version: &str, kind: Kind, text: &str) -> Vec<String> {
+        let data = crate::data::for_version(version).unwrap();
         let doc = &data.mcdoc;
         let c = check(text, reading(kind), &schema(kind, doc).unwrap(), doc, data);
         let mut out: Vec<String> = c.diags.iter().map(|d| format!("{} {}", d.code, d.message)).collect();
@@ -664,6 +680,46 @@ mod tests {
             ["undeclaredSymbol Cannot find loot_condition_type “minecraft:nope”"]
         );
         assert_eq!(run("predicate", r#"{"condition": "reference", "name": "t:p"}"#), ["ref predicate t:p"]);
+    }
+
+    #[test]
+    fn nbt_in_json_takes_a_number_for_a_boolean() {
+        let spawner = |entity: &str| format!(r#"{{"spawn_potentials": [{{"data": {{"entity": {entity}}}, "weight": 1}}]}}"#);
+        assert!(run_in("1.21.5", "trial_spawner", &spawner(r#"{"id": "minecraft:zombie", "IsBaby": 1}"#)).is_empty());
+        assert_eq!(run_in("1.21.5", "trial_spawner", &spawner(r#"{"id": "minecraft:zombie", "IsBaby": "yes"}"#)), ["jsonType Expected a boolean"]);
+        let components = |component: &str, value: &str| format!(r#"{{"function": "minecraft:set_components", "components": {{"minecraft:{component}": {value}}}}}"#);
+        for v in ["1.21.4", "1.21.5"] {
+            for (component, value) in [
+                ("entity_data", r#"{"id": "minecraft:item_frame", "Invisible": 1}"#),
+                ("entity_data", r#"{"id": "minecraft:pig", "Passengers": [{"id": "minecraft:zombie", "NoAI": 1}]}"#),
+                ("bucket_entity_data", r#"{"NoAI": 1}"#),
+                ("block_entity_data", r#"{"id": "minecraft:command_block", "auto": 1}"#),
+            ] {
+                assert!(run_in(v, "item_modifier", &components(component, value)).is_empty(), "{v} {component} {value}");
+            }
+            assert_eq!(run_in(v, "item_modifier", &components("bucket_entity_data", r#"{"NoAI": "yes"}"#)), ["jsonType Expected a boolean"], "{v}");
+        }
+        assert_eq!(run_in("1.21.5", "tag/item", r#"{"values": [{"id": "minecraft:stone", "required": 0}]}"#), ["jsonType Expected a boolean"]);
+    }
+
+    #[test]
+    fn wolf_sounds_have_a_step_sound_from_26_1() {
+        let names = ["ambient_sound", "death_sound", "growl_sound", "hurt_sound", "pant_sound", "whine_sound"];
+        let set = |step: &str| format!("{{{}{step}}}", names.iter().map(|n| format!(r#""{n}": "entity.wolf.step""#)).collect::<Vec<_>>().join(", "));
+        let sounds = |step: &str| format!(r#"{{"adult_sounds": {}, "baby_sounds": {}}}"#, set(step), set(step));
+        let step = r#", "step_sound": "entity.wolf.step""#;
+        assert!(run_in("26.1", "wolf_sound_variant", &sounds(step)).is_empty());
+        assert_eq!(run_in("26.1", "wolf_sound_variant", &sounds("")), ["jsonMissingKey Missing key “step_sound”"; 2]);
+        assert_eq!(run_in("1.21.11", "wolf_sound_variant", &set(step)), ["jsonUnknownKey Unknown key “step_sound”"]);
+    }
+
+    #[test]
+    fn the_map_extending_recipe_of_26_3_transmutes_its_result() {
+        let recipe = |result: &str| format!(r##"{{"type": "minecraft:crafting_special_mapextending", "map": "#minecraft:extendable_maps", "material": "minecraft:paper", "result": {result}}}"##);
+        let diags = |version: &str, result: &str| run_in(version, "recipe", &recipe(result)).into_iter().filter(|m| !m.starts_with("ref ")).collect::<Vec<_>>();
+        assert!(diags("26.3", "{}").is_empty());
+        assert!(diags("26.3", r#""minecraft:filled_map""#).is_empty());
+        assert_eq!(diags("26.2", "{}"), ["jsonMissingKey Missing key “id”"]);
     }
 
     #[test]

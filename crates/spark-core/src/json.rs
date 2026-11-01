@@ -53,6 +53,15 @@ pub(crate) fn parse_value(r: &mut Reader, depth: usize) -> PResult<Node> {
     value(r, depth, false)
 }
 
+pub(crate) fn parse_whole_lenient_value(r: &mut Reader) -> PResult<Node> {
+    let node = value(r, 0, true)?;
+    skip_whitespace(r, false)?;
+    if r.can_read() {
+        return Err(r.error("Did not consume the entire document"));
+    }
+    Ok(node)
+}
+
 fn value(r: &mut Reader, depth: usize, lenient: bool) -> PResult<Node> {
     skip_whitespace(r, lenient)?;
     let start = r.pos;

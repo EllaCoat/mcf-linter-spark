@@ -1,3 +1,5 @@
+use super::nbt::NbtValue;
+use super::nbt_check::{Category, Target};
 use super::{ArgCtx, entity, read_resource_location};
 use crate::data::VersionData;
 use crate::facts::kind;
@@ -161,7 +163,28 @@ pub fn slot_source(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
 /// `ResourceOrIdArgument`: an id of the registry, or the element written inline in SNBT.
 pub fn resource_or_id(r: &mut Reader, cx: &mut ArgCtx, registry: &str) -> PResult<()> {
     if !r.peek().is_some_and(super::is_allowed_in_resource_location) {
-        return super::nbt::parse_tag(r, super::nbt::modern(cx.data)).map(|_| ());
+        let start = r.pos;
+        let node = super::nbt::parse_tag(r, super::nbt::modern(cx.data))?;
+        let Some(k) = cx.data.file_kind(registry) else { return Ok(()) };
+        // Until 1.21.6 the element is read with `RegistryFileCodec`, which takes a string as its id.
+        if !cx.data.at_least(&[1, 21, 6])
+            && let NbtValue::String { value, quote } = &node.value
+        {
+            let mut id = Reader::new(value, 0);
+            if read_resource_location(&mut id).is_err() || id.can_read() {
+                return Err(r.error_span(start, format!("Not a valid resource location: {value}")));
+            }
+            let inner = u32::from(quote.is_some());
+            cx.reference(k, value, node.start + inner, node.end - inner);
+            return Ok(());
+        }
+        let target = match registry {
+            "item_modifier" => Target::new(Category::ItemModifier, None),
+            "slot_source" => Target::new(Category::SlotSource, None),
+            _ => Target::new(Category::Resource, Some(k.to_string())),
+        };
+        super::nbt::check(cx, &node, Some(&target));
+        return Ok(());
     }
     let (start, id) = read_resource_location(r)?;
     let (s, e) = (r.offset_of(start), r.offset());
@@ -171,10 +194,21 @@ pub fn resource_or_id(r: &mut Reader, cx: &mut ArgCtx, registry: &str) -> PResul
     Ok(())
 }
 
-/// `resource_selector`: an id pattern with `*` and `?`.
-pub fn resource_selector(r: &mut Reader) -> PResult<()> {
+/// `resource_selector`: an id pattern with `*` and `?`. A pattern without them names one id.
+pub fn resource_selector(r: &mut Reader, cx: &mut ArgCtx, registry: &str) -> PResult<()> {
+    let start = r.pos;
     let pattern = r.read_while(|b| super::is_allowed_in_resource_location(b) || matches!(b, b'*' | b'?'));
-    if pattern.is_empty() { Err(r.error("Expected a resource selector")) } else { Ok(()) }
+    if pattern.is_empty() {
+        return Err(r.error("Expected a resource selector"));
+    }
+    let short = registry.strip_prefix("minecraft:").unwrap_or(registry);
+    if !pattern.contains(['*', '?'])
+        && let Some(k) = cx.data.file_kind(short)
+    {
+        let (s, e) = (r.offset_of(start), r.offset());
+        cx.reference(k, pattern, s, e);
+    }
+    Ok(())
 }
 
 /// `hex_color`: `RGB` or `RRGGBB`.
@@ -351,7 +385,7 @@ pub fn resource_location(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
     match cx.name {
         "advancement" => cx.reference(kind::ADVANCEMENT, id, s, e),
         "id" if cx.follows(&["bossbar", "add"]) => cx.define(kind::BOSSBAR, crate::facts::full_id(id), s, e),
-        "id" => cx.reference(kind::BOSSBAR, id, s, e),
+        "id" if cx.follows(&["bossbar"]) || ["get", "remove", "set"].iter().any(|l| cx.follows(&["bossbar", l])) => cx.reference(kind::BOSSBAR, id, s, e),
         "predicate" => cx.reference(kind::PREDICATE, id, s, e),
         "modifier" => cx.reference(kind::ITEM_MODIFIER, id, s, e),
         "loot_table" => cx.reference(kind::LOOT_TABLE, id, s, e),

@@ -279,6 +279,28 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn json_text_in_a_component_is_lenient_until_1_21_5() {
+        for v in ["1.20.5", "1.21.4"] {
+            assert_eq!(diagnostics_in(v, "give @s stone[custom_name=\"a\"]"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "give @s stone[lore=[\"'a'\"]]"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "give @s stone[custom_name='{\"text\":\"a\"} b']"), ["Invalid chat component: Did not consume the entire document"], "{v}");
+            for comment in ["// c", "# c", "/* c */"] {
+                assert_eq!(diagnostics_in(v, &format!("give @s stone[custom_name='\"a\" {comment}']")), ["Invalid chat component: Did not consume the entire document"], "{v} {comment}");
+            }
+        }
+        assert!(diagnostics_in("1.20.4", "summon zombie ~ ~ ~ {CustomName:\"a\"}").iter().any(|d| d.starts_with("Invalid chat component: Malformed JSON")));
+    }
+
+    #[test]
+    fn entity_effect_particles_take_an_int_color_from_1_20_5() {
+        for v in ["1.20.5", "1.21.1", "1.21.2", "26.3"] {
+            assert_eq!(diagnostics_in(v, "particle entity_effect{color:-1} ~ ~ ~"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "particle entity_effect{color:[1f,0f,0f,1f]} ~ ~ ~"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "particle entity_effect{color:[1.0,0.0,0.0,1.0]} ~ ~ ~").len(), 4, "{v}");
+        }
+    }
+
+    #[test]
     fn snbt_follows_the_grammar_of_the_release() {
         assert_eq!(error_in("1.20.4", "data modify storage t: v set value [1, \"a\"]").as_deref(), Some("Can't insert TAG_String into list of TAG_Int"));
         assert_eq!(error_in("1.21.5", "data modify storage t: v set value [1, \"a\", {}]"), None);
@@ -340,6 +362,65 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn json_text_has_a_shadow_color_from_1_21_4() {
+        let line = |color: &str| format!(r#"tellraw @s {{"text":"a","shadow_color":{color}}}"#);
+        for v in ["1.20.4", "1.21.3"] {
+            assert_eq!(error_in(v, &line("\"red\"")), None, "{v}");
+        }
+        assert_eq!(error_in("1.21.4", &line("-1")), None);
+        assert_eq!(error_in("1.21.4", &line("[1,0,0,1]")), None);
+        for color in ["\"red\"", "[1,0,0]"] {
+            assert_eq!(error_in("1.21.4", &line(color)).as_deref(), Some("Invalid chat component: Not a number or a list of four numbers"), "{color}");
+        }
+    }
+
+    #[test]
+    fn only_bossbar_commands_take_a_bossbar_id() {
+        let refs = |line: &str| -> Vec<(&str, String)> {
+            let result = parse_in("26.3", line);
+            assert_eq!(result.error.map(|e| e.message), None, "{line}");
+            result.effects.into_iter().filter_map(|e| if let Effect::Ref(r) = e { Some((r.kind, r.id)) } else { None }).collect()
+        };
+        for line in ["bossbar get t:b max", "bossbar set t:b value 1", "bossbar remove t:b", "execute store result bossbar t:b value run say a"] {
+            assert_eq!(refs(line), [(kind::BOSSBAR, "t:b".to_string())], "{line}");
+        }
+        for line in ["attribute @s minecraft:max_health modifier add t:m 1 add_value", "stopwatch create t:w", "execute if stopwatch t:w 1.. run say a", "test create t:t"] {
+            assert_eq!(refs(line), [], "{line}");
+        }
+    }
+
+    #[test]
+    fn inline_elements_are_checked_against_their_type() {
+        for v in ["1.20.5", "1.21.5"] {
+            assert_eq!(diagnostics_in(v, "loot give @s loot {pools:[]}"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "item modify entity @s weapon.mainhand {function:\"minecraft:set_count\",count:2}"), none(), "{v}");
+            assert_eq!(diagnostics_in(v, "execute if predicate {condition:\"minecraft:random_chance\"} run say a"), ["Missing key “chance”"], "{v}");
+        }
+        assert_eq!(diagnostics_in("26.3", "execute if predicate {condition:\"minecraft:random_chance\",chance:0.5f} run say a"), ["Missing key “type”"]);
+        assert_eq!(diagnostics_in("26.3", "dialog show @s {type:\"minecraft:notice\"}"), ["Missing key “title”"]);
+        assert_eq!(diagnostics_in("26.3", "compute default integer {type:\"minecraft:constant\"}"), ["Missing key “value”"]);
+        let modifier = |m: &str| format!("item modify entity @s weapon.mainhand {m}");
+        assert_eq!(diagnostics_in("26.3", &modifier("[{type:\"minecraft:set_count\",count:2},{type:\"minecraft:set_count\",count:3}]")), none());
+        assert_eq!(diagnostics_in("26.3", &modifier("[{type:\"minecraft:set_count\"}]")), ["Missing key “count”"]);
+        assert_eq!(diagnostics_in("26.3", "execute if items entity @s [{type:\"minecraft:slot_range\",slots:\"weapon.mainhand\"}] * run say a"), none());
+        assert_eq!(diagnostics_in("26.3", &modifier("[\"t:m\",{type:\"minecraft:set_count\",count:3}]")), none());
+        assert_eq!(diagnostics_in("26.3", "execute if items entity @s [\"t:s\",{type:\"minecraft:slot_range\",slots:\"weapon.offhand\"}] * run say a"), none());
+        let refs = |v: &str, line: &str| -> Vec<(&str, String)> {
+            parse_in(v, line).effects.into_iter().filter_map(|e| if let Effect::Ref(r) = e { Some((r.kind, r.id)) } else { None }).collect()
+        };
+        assert_eq!(refs("26.3", &modifier("[\"t:m\"]")), [(kind::ITEM_MODIFIER, "t:m".to_string())]);
+        for v in ["1.20.5", "1.21.5"] {
+            assert_eq!(diagnostics_in(v, "loot give @s loot \"t:l\""), none(), "{v}");
+            assert_eq!(refs(v, "loot give @s loot \"t:l\""), [(kind::LOOT_TABLE, "t:l".to_string())], "{v}");
+            assert!(error_in(v, "loot give @s loot \"T:l\"").is_some(), "{v}");
+        }
+        assert_eq!(diagnostics_in("1.21.6", "loot give @s loot \"t:l\""), ["Expected a compound tag but got a string tag"]);
+        assert_eq!(diagnostics_in("1.21.5", &modifier("[{type:\"minecraft:set_count\",count:2}]")), ["Missing key “function”"]);
+        let double = "Expected a float tag but got a double tag (rule: “nbtTypeCheck”)";
+        assert_eq!(diagnostics_in("1.21.5", &modifier("{function:\"minecraft:set_count\",count:{min:1.0,max:3.0}}")), [double, double]);
+    }
+
+    #[test]
     fn data_pack_ids_in_resource_arguments_are_references() {
         let refs = |version: &str, line: &str| -> Vec<(&str, String)> {
             let result = parse_in(version, line);
@@ -352,6 +433,8 @@ pub(crate) mod tests {
         assert_eq!(refs("1.21.2", "advancement grant @s only t:a"), [(kind::ADVANCEMENT, "t:a".to_string())]);
         assert_eq!(refs("1.21.2", "recipe give @s t:r"), [(kind::RECIPE, "t:r".to_string())]);
         assert_eq!(refs("1.20.4", "locate biome t:b"), [("worldgen/biome", "t:b".to_string())]);
+        assert_eq!(refs("1.21.5", "test locate t:x"), [("test_instance", "t:x".to_string())]);
+        assert_eq!(refs("1.21.5", "test locate t:*"), []);
         assert_eq!(refs("1.20.4", "effect give @s t:e"), []);
         assert_eq!(refs("1.20.4", "enchant @s t:e"), []);
         assert_eq!(refs("1.21", "enchant @s t:e"), [("enchantment", "t:e".to_string())]);
