@@ -609,6 +609,10 @@ impl Project {
             };
             return Some(Diagnostic { start: r.start, end: r.end, severity, code: "impDocPrivate", message });
         }
+        if let Some(advice) = crate::args::basic::misread_id(r.kind, &r.id, self.data) {
+            let message = format!("Failed to resolve {} '{}': {advice}", r.kind, r.id);
+            return Some(Diagnostic { start: r.start, end: r.end, severity: Severity::Warning, code: rule.unwrap_or("unresolved"), message });
+        }
         let message = format!("Failed to resolve {} '{}'", r.kind, r.id);
         Some(Diagnostic { start: r.start, end: r.end, severity, code: rule.unwrap_or("unresolved"), message })
     }
@@ -1147,6 +1151,59 @@ mod tests {
             main,
         );
         assert_eq!(reported_26_3, [("unresolved", "t:none".to_string())]);
+    }
+
+    #[test]
+    fn ids_of_26_3_written_as_old_slots_or_numbers_are_warnings_unless_a_pack_defines_them() {
+        let root = std::env::temp_dir().join("ai-agent").join("mcf-linter-spark-tests").join("misread-ids");
+        let _ = std::fs::remove_dir_all(&root);
+        let main = "data/t/function/main.mcfunction";
+        let lines = [
+            "item replace entity @s horse.saddle with stone",
+            "item replace entity @s minecraft:horse.armor with stone",
+            "execute if items entity @s villager.7 * run say a",
+            "execute if items entity @s minecraft:weapon.mainhand * run say a",
+            "compute default integer -1",
+            "compute default float 1.5",
+            "compute default float 2d",
+            "compute default integer 3b",
+            "item replace entity @s villager.3 with stone",
+            "item replace entity @s villager.8 with stone",
+            "compute default integer t:none",
+            "test locate t:x",
+            "item replace entity @s saddle with stone",
+            "execute if items entity @s mob.inventory.7 * run say a",
+            "compute default integer {type:\"minecraft:constant\",value:-1}",
+            "compute default float {type:\"minecraft:constant\",value:1.5f}",
+        ];
+        let text = lines.join("\n") + "\n";
+        for (rel, text) in [("pack.mcmeta", "{}"), (main, text.as_str()), ("data/minecraft/slot_source/villager.3.json", "{}")] {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let config = Config::from_settings(r#"{"datapack.env.cmdVersion": "26.3"}"#).unwrap();
+        let p = Project::load(&root, config, &Options { ignore: Vec::new(), max_depth: 0 }).unwrap();
+        let fid = p.files.iter().position(|f| f.rel == main).unwrap() as FileId;
+        let found: Vec<_> = p.diagnostics(fid).into_iter().map(|d| (d.severity, d.message)).collect();
+        let warning = |m: &str| (Severity::Warning, m.to_string());
+        let hint = |m: &str| (Severity::Hint, m.to_string());
+        assert_eq!(
+            found,
+            [
+                warning("Failed to resolve slot_source 'minecraft:horse.saddle': 'horse.saddle' is no longer a slot, so it is read as an id. The slot is now 'saddle'"),
+                warning("Failed to resolve slot_source 'minecraft:horse.armor': 'horse.armor' is no longer a slot, so it is read as an id. The slot is now 'armor.body'"),
+                warning("Failed to resolve slot_source 'minecraft:villager.7': 'villager.7' is no longer a slot, so it is read as an id. The slot is now 'mob.inventory.7'"),
+                warning("Failed to resolve slot_source 'minecraft:weapon.mainhand': a slot with a namespace is read as an id. Write the slot as 'weapon.mainhand'"),
+                warning("Failed to resolve context_int_provider 'minecraft:-1': a number here is read as an id. Write a constant as {type:\"minecraft:constant\",value:-1}"),
+                warning("Failed to resolve context_float_provider 'minecraft:1.5': a number here is read as an id. Write a constant as {type:\"minecraft:constant\",value:1.5f}"),
+                warning("Failed to resolve context_float_provider 'minecraft:2d': a number here is read as an id. Write a constant as {type:\"minecraft:constant\",value:2f}"),
+                warning("Failed to resolve context_int_provider 'minecraft:3b': a number here is read as an id. Write a constant as {type:\"minecraft:constant\",value:3}"),
+                hint("Failed to resolve slot_source 'minecraft:villager.8'"),
+                hint("Failed to resolve context_int_provider 't:none'"),
+                hint("Failed to resolve test_instance 't:x'"),
+            ]
+        );
     }
 
     #[test]
