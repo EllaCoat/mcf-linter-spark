@@ -101,7 +101,7 @@ fn main() -> ExitCode {
             }
         }
         Err(message) => {
-            eprintln!("mcf-linter-spark: {message}");
+            eprintln!("mcf-linter-spark: {}", one_line(&message));
             ExitCode::from(2)
         }
     }
@@ -113,7 +113,7 @@ fn run(args: &Args) -> Result<bool, String> {
     let max_depth = args.max_depth.unwrap_or_else(|| default_max_depth(&config));
     let project = Project::load(&args.root, config, &Options { ignore: args.ignore.clone(), max_depth })?;
     for notice in &project.notices {
-        eprintln!("mcf-linter-spark: {notice}");
+        eprintln!("mcf-linter-spark: {}", one_line(notice));
     }
     if project.files.is_empty() {
         return Err(format!("no data pack files found under {}", args.root.display()));
@@ -152,7 +152,7 @@ fn run(args: &Args) -> Result<bool, String> {
                     );
                 }
                 _ => {
-                    let _ = writeln!(out, "{}:{}:{} {} {} ({})", f.rel, l1 + 1, c1 + 1, d.severity.as_str(), d.message, d.code);
+                    let _ = writeln!(out, "{}:{}:{} {} {} ({})", line_start_path(&f.rel), l1 + 1, c1 + 1, d.severity.as_str(), one_line(&d.message), d.code);
                 }
             }
             if let Some(j) = json.as_mut() {
@@ -189,10 +189,39 @@ fn run(args: &Args) -> Result<bool, String> {
     Ok(counts[0] + counts[1] > 0)
 }
 
+fn one_line(s: &str) -> String {
+    let line: String = s.chars().map(|c| if c.is_control() { c.escape_default().to_string() } else { c.to_string() }).collect();
+    line.replace("##[", "##\\[")
+}
+
+fn line_start_path(rel: &str) -> String {
+    let path = one_line(rel);
+    if path.trim_start().starts_with("::") { format!("./{path}") } else { path }
+}
+
 fn escape_data(s: &str) -> String {
-    s.replace('%', "%25").replace('\r', "%0D").replace('\n', "%0A")
+    s.chars()
+        .map(|c| match c {
+            '%' => "%25".to_string(),
+            '\r' => "%0D".to_string(),
+            '\n' => "%0A".to_string(),
+            c if c.is_control() => c.escape_default().to_string(),
+            c => c.to_string(),
+        })
+        .collect()
 }
 
 fn escape_property(s: &str) -> String {
     escape_data(s).replace(':', "%3A").replace(',', "%2C")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_path_that_reads_as_a_workflow_command_does_not_start_a_line() {
+        assert_eq!(line_start_path(" ::warning title=x::y/data/t/function/f.mcfunction"), "./ ::warning title=x::y/data/t/function/f.mcfunction");
+        assert_eq!(line_start_path("pack/data/t/function/f.mcfunction"), "pack/data/t/function/f.mcfunction");
+    }
 }
