@@ -245,15 +245,21 @@ pub(crate) mod tests {
         }
     }
 
+    fn nested_compounds(n: usize) -> String {
+        format!("data modify storage a:b x set value {}1{}", "{a:".repeat(n), "}".repeat(n))
+    }
+
+    fn nested_lists(n: usize) -> String {
+        format!("data modify storage a:b x set value {}1{}", "[".repeat(n), "]".repeat(n))
+    }
+
     #[test]
-    fn nbt_deeper_than_the_game_writes_and_chains_past_the_node_limit_are_errors() {
-        let compounds = |n: usize| format!("data modify storage a:b x set value {}1{}", "{a:".repeat(n), "}".repeat(n));
-        let lists = |n: usize| format!("data modify storage a:b x set value {}1{}", "[".repeat(n), "]".repeat(n));
-        for v in ["1.20.4", "26.3"] {
-            assert_eq!(error_in(v, &compounds(512)), None, "{v}");
-            assert_eq!(error_in(v, &lists(512)), None, "{v}");
-            assert_eq!(error_in(v, &compounds(513)).as_deref(), Some("Resulting NBT too deeply nested"), "{v}");
-            assert_eq!(error_in(v, &lists(513)).as_deref(), Some("Resulting NBT too deeply nested"), "{v}");
+    fn nbt_past_512_levels_and_chains_past_the_node_limit_are_errors() {
+        for v in ["1.21.5", "26.3"] {
+            assert_eq!(error_in(v, &nested_compounds(512)), None, "{v}");
+            assert_eq!(error_in(v, &nested_lists(512)), None, "{v}");
+            assert_eq!(error_in(v, &nested_compounds(513)).as_deref(), Some("Resulting NBT too deeply nested"), "{v}");
+            assert_eq!(error_in(v, &nested_lists(513)).as_deref(), Some("Resulting NBT too deeply nested"), "{v}");
         }
         let chains = std::thread::Builder::new().stack_size(64 << 20).spawn(|| {
             let chain = |n: usize| format!("execute {}run say a", "as @s ".repeat(n));
@@ -262,6 +268,17 @@ pub(crate) mod tests {
         let (within, past) = chains.unwrap().join().unwrap();
         assert_eq!(within, None);
         assert_eq!(past.as_deref(), Some("Too many arguments in one command (more than 8192)"));
+    }
+
+    #[test]
+    fn nbt_past_512_levels_is_a_warning_in_releases_whose_server_reads_it() {
+        for v in ["1.20.4", "1.21.4"] {
+            assert_eq!(error_in(v, &nested_compounds(512)), None, "{v}");
+            for line in [nested_compounds(513), nested_lists(513)] {
+                let e = parse_in(v, &line).error.unwrap();
+                assert_eq!((e.severity, e.message), (crate::diag::Severity::Warning, crate::args::nbt::too_deep_to_check()), "{v}");
+            }
+        }
     }
 
     #[test]

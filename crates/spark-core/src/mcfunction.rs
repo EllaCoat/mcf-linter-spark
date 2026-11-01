@@ -367,7 +367,7 @@ impl Analyzer<'_> {
         }
         let result = parse_command(content, base, self.data, self.config);
         if let Some(e) = result.error {
-            self.diag(e.start, e.end, Severity::Error, "syntax", e.message);
+            self.diag(e.start, e.end, e.severity, "syntax", e.message);
         }
         for effect in result.effects {
             match effect {
@@ -611,6 +611,17 @@ mod tests {
         assert_eq!(severities(&config), [Severity::Hint, Severity::Error]);
         config.merge_spyglass("{}").unwrap();
         assert_eq!(severities(&config), [Severity::Error]);
+    }
+
+    #[test]
+    fn nbt_past_512_levels_is_a_warning_in_1_20_4_also_inside_a_string() {
+        let deep = format!("{}1{}", "{a:".repeat(513), "}".repeat(513));
+        for line in [format!("data modify storage a:b x set value {deep}"), format!("summon area_effect_cloud ~ ~ ~ {{Particle:\"item stone{deep}\"}}")] {
+            let found: Vec<_> = run(&format!("{line}\n")).diags.into_iter().filter(|d| d.severity != Severity::Hint).map(|d| (d.severity, d.message)).collect();
+            assert_eq!(found, [(Severity::Warning, crate::args::nbt::too_deep_to_check())], "{line}");
+        }
+        let lists = format!("data modify storage a:b x set value {}1{}\n", "[".repeat(512), "]".repeat(512));
+        assert!(run(&lists).diags.iter().all(|d| d.severity == Severity::Hint));
     }
 
     #[test]

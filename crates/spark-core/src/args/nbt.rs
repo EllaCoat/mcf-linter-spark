@@ -85,6 +85,10 @@ pub fn modern(data: &VersionData) -> bool {
 pub const MAX_DEPTH: usize = 512;
 pub const TOO_DEEP: &str = "Resulting NBT too deeply nested";
 
+pub fn too_deep_to_check() -> String {
+    format!("Stopped checking from here: the NBT is nested deeper than {MAX_DEPTH} levels")
+}
+
 /// `TagParser.readStruct`. Leading whitespace is skipped.
 pub fn parse_compound(r: &mut Reader, modern: bool) -> PResult<NbtNode> {
     if modern { snbt::parse_compound(r) } else { read_struct(r, 0) }
@@ -212,7 +216,7 @@ fn read_value(r: &mut Reader, depth: usize) -> PResult<NbtNode> {
     skip_ws(r);
     match r.peek() {
         None => Err(r.error("Expected value")),
-        Some(b'{' | b'[') if depth >= MAX_DEPTH => Err(r.error(TOO_DEEP)),
+        Some(b'{' | b'[') if depth >= MAX_DEPTH => Err(r.error(too_deep_to_check()).warning()),
         Some(b'{') => read_struct(r, depth),
         Some(b'[') => read_list(r, depth),
         Some(_) => read_typed_value(r),

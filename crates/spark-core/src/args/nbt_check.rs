@@ -1140,7 +1140,7 @@ impl<'a> Checker<'a> {
             Holds::Command | Holds::Objective => return,
         };
         if let Err(e) = result {
-            effects.push(Effect::Diag(Diagnostic { start: e.start, end: e.end, severity: Severity::Error, code: "syntax", message: e.message }));
+            effects.push(Effect::Diag(Diagnostic { start: e.start, end: e.end, severity: e.severity, code: "syntax", message: e.message }));
         }
         for effect in &mut effects {
             let range = match effect {
