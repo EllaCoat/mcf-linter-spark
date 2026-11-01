@@ -194,10 +194,21 @@ pub fn resource_or_id(r: &mut Reader, cx: &mut ArgCtx, registry: &str) -> PResul
     Ok(())
 }
 
-/// `resource_selector`: an id pattern with `*` and `?`.
-pub fn resource_selector(r: &mut Reader) -> PResult<()> {
+/// `resource_selector`: an id pattern with `*` and `?`. A pattern without them names one id.
+pub fn resource_selector(r: &mut Reader, cx: &mut ArgCtx, registry: &str) -> PResult<()> {
+    let start = r.pos;
     let pattern = r.read_while(|b| super::is_allowed_in_resource_location(b) || matches!(b, b'*' | b'?'));
-    if pattern.is_empty() { Err(r.error("Expected a resource selector")) } else { Ok(()) }
+    if pattern.is_empty() {
+        return Err(r.error("Expected a resource selector"));
+    }
+    let short = registry.strip_prefix("minecraft:").unwrap_or(registry);
+    if !pattern.contains(['*', '?'])
+        && let Some(k) = cx.data.file_kind(short)
+    {
+        let (s, e) = (r.offset_of(start), r.offset());
+        cx.reference(k, pattern, s, e);
+    }
+    Ok(())
 }
 
 /// `hex_color`: `RGB` or `RRGGBB`.

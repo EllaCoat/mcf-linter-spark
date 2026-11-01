@@ -251,7 +251,7 @@ pub fn parse(parser: &Parser, r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
             basic::resource(r, cx, registry, true)
         }
         Parser::ResourceOrId { registry } => basic::resource_or_id(r, cx, registry),
-        Parser::ResourceSelector { .. } => basic::resource_selector(r),
+        Parser::ResourceSelector { registry } => basic::resource_selector(r, cx, registry),
         Parser::Unknown(id) => Err(r.error(format!("Unsupported argument type {id}"))),
     }
 }
