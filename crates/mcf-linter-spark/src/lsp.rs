@@ -376,7 +376,7 @@ impl Server {
                 }
             }
         }
-        let mut value = format!("**{kind}** `{id}`");
+        let mut value = format!("**{kind}** {}", code_span(&id));
         for d in docs {
             value.push_str("\n\n---\n\n");
             value.push_str(&markdown_doc(&linked_doc(project, d)));
@@ -699,6 +699,14 @@ fn markdown_doc(doc: &str) -> String {
     doc.lines().map(|l| format!("{}  ", l.trim_end().replace("![", "&#33;["))).collect::<Vec<_>>().join("\n")
 }
 
+fn code_span(text: &str) -> String {
+    let text: String = text.chars().map(|c| if c.is_control() { c.escape_debug().to_string() } else { c.to_string() }).collect();
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest + 1);
+    let pad = if text.starts_with('`') || text.ends_with('`') { " " } else { "" };
+    format!("{fence}{pad}{text}{pad}{fence}")
+}
+
 fn to_lsp(project: &Project, fid: FileId) -> Vec<Diagnostic> {
     let f = &project.files[fid as usize];
     let index = LineIndex::new(&f.text);
@@ -750,6 +758,14 @@ mod tests {
     fn an_image_in_a_doc_is_shown_as_a_link_in_the_hover() {
         assert_eq!(markdown_doc("Spawns a mob ![x](https://example.com/x.png)\n[lib](file:///t.mcfunction)"), "Spawns a mob &#33;[x](https://example.com/x.png)  \n[lib](file:///t.mcfunction)  ");
         assert_eq!(markdown_doc("\\![x](https://example.com/x.png)"), "\\&#33;[x](https://example.com/x.png)  ");
+    }
+
+    #[test]
+    fn a_symbol_name_with_backticks_stays_in_the_code_span_of_the_hover() {
+        assert_eq!(code_span("t:lib"), "`t:lib`");
+        assert_eq!(code_span("a`![x](https://example.com/x.png)"), "``a`![x](https://example.com/x.png)``");
+        assert_eq!(code_span("``a"), "``` ``a ```");
+        assert_eq!(code_span("a\n\n![x](https://example.com/x.png)"), "`a\\n\\n![x](https://example.com/x.png)`");
     }
 
     #[test]
