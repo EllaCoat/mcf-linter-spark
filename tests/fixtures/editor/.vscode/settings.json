@@ -1,1 +1,1 @@
-{"datapack.lint.strictFunctionCheck": ["error", true]}
+{"datapack.lint.strictFunctionCheck": ["error", true], "mcfLinterSpark.serverPath": "does-not-exist.exe"}

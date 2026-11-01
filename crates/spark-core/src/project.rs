@@ -752,6 +752,9 @@ fn referenced(f: &FileState) -> impl Iterator<Item = &Ref> {
 }
 
 pub fn read_text(path: &Path) -> Arc<str> {
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return "".into();
+    }
     std::fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned().into()).unwrap_or_else(|_| "".into())
 }
 
@@ -821,6 +824,7 @@ fn function_tag_refs(text: &str) -> Vec<TagEntry> {
 pub fn discover_packs(root: &Path, max_depth: usize) -> Vec<PathBuf> {
     let mut packs = Vec::new();
     let mut level = vec![root.to_path_buf()];
+    let mut seen: HashSet<PathBuf> = std::fs::canonicalize(root).into_iter().collect();
     for depth in 0..=max_depth {
         if level.is_empty() {
             break;
@@ -836,7 +840,7 @@ pub fn discover_packs(root: &Path, max_depth: usize) -> Vec<PathBuf> {
                     for e in rd.flatten() {
                         let p = e.path();
                         let name = e.file_name().to_string_lossy().into_owned();
-                        if p.is_dir() && !name.starts_with('.') && name != "node_modules" {
+                        if p.is_dir() && !name.starts_with('.') && name != "node_modules" && std::fs::canonicalize(&p).map_or(true, |c| seen.insert(c)) {
                             next.push(p);
                         }
                     }

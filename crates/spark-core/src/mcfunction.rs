@@ -232,7 +232,7 @@ fn parse_doc(lines: &[Line], i: usize, is_function_doc: bool) -> (DocComment, us
             if line.text.as_bytes().get(content_start) == Some(&b'@') {
                 let mut annos = Vec::new();
                 let indent = content_start - after_hash;
-                parse_annotation(lines, &mut j, content_start, indent, &mut annos);
+                parse_annotation(lines, &mut j, content_start, indent, &mut annos, 0);
                 for anno in annos {
                     flatten(&anno, &mut Vec::new(), &mut doc.annotations);
                 }
@@ -253,9 +253,11 @@ struct Anno {
     children: Vec<Anno>,
 }
 
+const MAX_ANNOTATION_DEPTH: usize = 64;
+
 /// DHP's `parseAnnotations`: a value, then either more values on the same line
 /// (children) or child lines indented by at least two more spaces.
-fn parse_annotation(lines: &[Line], li: &mut usize, pos: usize, indent: usize, out: &mut Vec<Anno>) {
+fn parse_annotation(lines: &[Line], li: &mut usize, pos: usize, indent: usize, out: &mut Vec<Anno>, depth: usize) {
     let line = &lines[*li];
     let end = line.text[pos..].find(' ').map_or(line.text.len(), |k| pos + k);
     let value = Token {
@@ -264,9 +266,13 @@ fn parse_annotation(lines: &[Line], li: &mut usize, pos: usize, indent: usize, o
         end: (line.start + end) as u32,
     };
     let mut anno = Anno { value, children: Vec::new() };
+    if depth >= MAX_ANNOTATION_DEPTH {
+        out.push(anno);
+        return;
+    }
     if line.text.as_bytes().get(end) == Some(&b' ') {
         let next = end + (line.text[end..].len() - line.text[end..].trim_start_matches([' ', '\t']).len());
-        parse_annotation(lines, li, next, indent, &mut anno.children);
+        parse_annotation(lines, li, next, indent, &mut anno.children, depth + 1);
     } else {
         while *li + 1 < lines.len() {
             let next_line = &lines[*li + 1];
@@ -283,7 +289,7 @@ fn parse_annotation(lines: &[Line], li: &mut usize, pos: usize, indent: usize, o
                 break;
             }
             *li += 1;
-            parse_annotation(lines, li, indent_end, indent_end - indent_start, &mut anno.children);
+            parse_annotation(lines, li, indent_end, indent_end - indent_start, &mut anno.children, depth + 1);
         }
     }
     out.push(anno);
@@ -361,7 +367,7 @@ impl Analyzer<'_> {
         }
         let result = parse_command(content, base, self.data, self.config);
         if let Some(e) = result.error {
-            self.diag(e.start, e.end, Severity::Error, "syntax", e.message);
+            self.diag(e.start, e.end, e.severity, "syntax", e.message);
         }
         for effect in result.effects {
             match effect {
@@ -524,6 +530,12 @@ mod tests {
     }
 
     #[test]
+    fn annotations_deeper_than_the_limit_are_read_up_to_it() {
+        let f = run(&format!("#> a:b/c\n# @within {}\nsay hi\n", "function ".repeat(10_000)));
+        assert!(f.function_doc.is_some());
+    }
+
+    #[test]
     fn function_doc_with_other_id_is_ignored() {
         let f = run("#> a:other\n# @private\nsay hi\n");
         assert!(f.function_doc.is_none());
@@ -599,6 +611,17 @@ mod tests {
         assert_eq!(severities(&config), [Severity::Hint, Severity::Error]);
         config.merge_spyglass("{}").unwrap();
         assert_eq!(severities(&config), [Severity::Error]);
+    }
+
+    #[test]
+    fn nbt_past_512_levels_is_a_warning_in_1_20_4_also_inside_a_string() {
+        let deep = format!("{}1{}", "{a:".repeat(513), "}".repeat(513));
+        for line in [format!("data modify storage a:b x set value {deep}"), format!("summon area_effect_cloud ~ ~ ~ {{Particle:\"item stone{deep}\"}}")] {
+            let found: Vec<_> = run(&format!("{line}\n")).diags.into_iter().filter(|d| d.severity != Severity::Hint).map(|d| (d.severity, d.message)).collect();
+            assert_eq!(found, [(Severity::Warning, crate::args::nbt::too_deep_to_check())], "{line}");
+        }
+        let lists = format!("data modify storage a:b x set value {}1{}\n", "[".repeat(512), "]".repeat(512));
+        assert!(run(&lists).diags.iter().all(|d| d.severity == Severity::Hint));
     }
 
     #[test]

@@ -201,7 +201,7 @@ fn read_or_fetch<T: DeserializeOwned>(dir: &Path, name: &str, url: &str) -> Resu
     std::fs::create_dir_all(dir).map_err(|e| fail(format!("{}: {e}", dir.display())))?;
     let tmp = dir.join(format!("{name}.json.{}.tmp", std::process::id()));
     let output = Command::new("curl")
-        .args(["--fail", "--silent", "--show-error", "--location", "--max-time", "60", "--output"])
+        .args(["--fail", "--silent", "--show-error", "--proto", "=https", "--proto-redir", "=https", "--location", "--max-time", "60", "--output"])
         .arg(&tmp)
         .arg(url)
         .output()

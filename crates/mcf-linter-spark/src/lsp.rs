@@ -376,7 +376,7 @@ impl Server {
                 }
             }
         }
-        let mut value = format!("**{kind}** `{id}`");
+        let mut value = format!("**{kind}** {}", code_span(&id));
         for d in docs {
             value.push_str("\n\n---\n\n");
             value.push_str(&markdown_doc(&linked_doc(project, d)));
@@ -660,6 +660,7 @@ impl StorageIndex {
 fn files_in(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
+    let mut seen: HashSet<PathBuf> = std::fs::canonicalize(dir).into_iter().collect();
     while let Some(d) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for e in entries.flatten() {
@@ -667,7 +668,7 @@ fn files_in(dir: &Path) -> Vec<PathBuf> {
             let name = e.file_name().to_string_lossy().into_owned();
             if !p.is_dir() {
                 out.push(p);
-            } else if !name.starts_with('.') && name != "node_modules" {
+            } else if !name.starts_with('.') && name != "node_modules" && std::fs::canonicalize(&p).map_or(true, |c| seen.insert(c)) {
                 pending.push(p);
             }
         }
@@ -695,7 +696,15 @@ fn apply_changes(text: &str, changes: Vec<TextDocumentContentChangeEvent>) -> St
 
 /// Keeps the doc's line breaks in Markdown.
 fn markdown_doc(doc: &str) -> String {
-    doc.lines().map(|l| format!("{}  ", l.trim_end())).collect::<Vec<_>>().join("\n")
+    doc.lines().map(|l| format!("{}  ", l.trim_end().replace("![", "&#33;["))).collect::<Vec<_>>().join("\n")
+}
+
+fn code_span(text: &str) -> String {
+    let text: String = text.chars().map(|c| if c.is_control() { c.escape_debug().to_string() } else { c.to_string() }).collect();
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest + 1);
+    let pad = if text.starts_with('`') || text.ends_with('`') { " " } else { "" };
+    format!("{fence}{pad}{text}{pad}{fence}")
 }
 
 fn to_lsp(project: &Project, fid: FileId) -> Vec<Diagnostic> {
@@ -743,6 +752,20 @@ mod tests {
         ];
         assert_eq!(apply_changes(text, edits), "say あXう\nfunction t:missing\nsay end\n");
         assert_eq!(apply_changes(text, vec![change(None, "whole")]), "whole");
+    }
+
+    #[test]
+    fn an_image_in_a_doc_is_shown_as_a_link_in_the_hover() {
+        assert_eq!(markdown_doc("Spawns a mob ![x](https://example.com/x.png)\n[lib](file:///t.mcfunction)"), "Spawns a mob &#33;[x](https://example.com/x.png)  \n[lib](file:///t.mcfunction)  ");
+        assert_eq!(markdown_doc("\\![x](https://example.com/x.png)"), "\\&#33;[x](https://example.com/x.png)  ");
+    }
+
+    #[test]
+    fn a_symbol_name_with_backticks_stays_in_the_code_span_of_the_hover() {
+        assert_eq!(code_span("t:lib"), "`t:lib`");
+        assert_eq!(code_span("a`![x](https://example.com/x.png)"), "``a`![x](https://example.com/x.png)``");
+        assert_eq!(code_span("``a"), "``` ``a ```");
+        assert_eq!(code_span("a\n\n![x](https://example.com/x.png)"), "`a\\n\\n![x](https://example.com/x.png)`");
     }
 
     #[test]

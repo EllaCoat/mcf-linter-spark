@@ -26,11 +26,13 @@ pub struct CommandResult {
     pub effects: Vec<Effect>,
 }
 
+pub const MAX_NODES: usize = 8192;
+
 pub fn parse_command(line: &str, base: u32, data: &VersionData, config: &Config) -> CommandResult {
     let w = Walker { data, config, src: line, base };
     let mut path = Vec::new();
     let mut values = Vec::new();
-    match w.children(ROOT, 0, &mut path, &mut values) {
+    match w.children(ROOT, 0, &mut path, &mut values, 0) {
         Ok(effects) => CommandResult { error: None, effects },
         Err((error, effects)) => CommandResult { error: Some(error), effects },
     }
@@ -52,13 +54,16 @@ impl<'a> Walker<'a> {
     }
 
     /// Parses the children of `node` starting at byte `pos` of the line.
-    fn children(&self, node: NodeId, pos: usize, path: &mut Vec<PathNode<'a>>, values: &mut Vec<ArgValue>) -> Outcome {
+    fn children(&self, node: NodeId, pos: usize, path: &mut Vec<PathNode<'a>>, values: &mut Vec<ArgValue>, depth: usize) -> Outcome {
+        if depth >= MAX_NODES {
+            return Err((self.err_at(pos, &format!("Too many arguments in one command (more than {MAX_NODES})")), Vec::new()));
+        }
         let tree = &self.data.tree;
         let n = tree.node(node);
         let word_end = self.src[pos..].find(' ').map_or(self.src.len(), |i| pos + i);
         let word = &self.src[pos..word_end];
         if let Some(&lit) = n.literals.iter().find(|&&c| tree.node(c).name() == word) {
-            return self.after_node(lit, word_end, Vec::new(), path, values);
+            return self.after_node(lit, word_end, Vec::new(), path, values, depth);
         }
         if n.arguments.is_empty() {
             let message = if node == ROOT { "Unknown command" } else { "Incorrect argument for command" };
@@ -72,7 +77,7 @@ impl<'a> Walker<'a> {
             let saved = values.len();
             let mut cx = ArgCtx { data: self.data, config: self.config, effects: &mut effects, name, path, values };
             let outcome = match args::parse(parser, &mut reader, &mut cx) {
-                Ok(()) => self.after_node(arg, reader.pos, effects, path, values),
+                Ok(()) => self.after_node(arg, reader.pos, effects, path, values, depth),
                 Err(e) => Err((e, effects)),
             };
             if outcome.is_err() {
@@ -91,7 +96,15 @@ impl<'a> Walker<'a> {
     }
 
     /// Continues after `node` has consumed the line up to `end`.
-    fn after_node(&self, node: NodeId, end: usize, mut effects: Vec<Effect>, path: &mut Vec<PathNode<'a>>, values: &mut Vec<ArgValue>) -> Outcome {
+    fn after_node(
+        &self,
+        node: NodeId,
+        end: usize,
+        mut effects: Vec<Effect>,
+        path: &mut Vec<PathNode<'a>>,
+        values: &mut Vec<ArgValue>,
+        depth: usize,
+    ) -> Outcome {
         let tree: &'a crate::tree::CommandTree = &self.data.tree;
         let n = tree.node(node);
         if end >= self.src.len() {
@@ -113,13 +126,13 @@ impl<'a> Walker<'a> {
         let result = if n.redirect == Some(ROOT) {
             let outer = std::mem::take(path);
             let outer_values = std::mem::take(values);
-            let result = self.children(next, end + 1, path, values);
+            let result = self.children(next, end + 1, path, values, depth + 1);
             *path = outer;
             *values = outer_values;
             result
         } else {
             path.push(PathNode { name: n.name(), literal: matches!(n.kind, NodeKind::Literal(_)) });
-            let result = self.children(next, end + 1, path, values);
+            let result = self.children(next, end + 1, path, values, depth + 1);
             path.pop();
             result
         };
@@ -232,6 +245,47 @@ pub(crate) mod tests {
         }
     }
 
+    fn nested_compounds(n: usize) -> String {
+        format!("data modify storage a:b x set value {}1{}", "{a:".repeat(n), "}".repeat(n))
+    }
+
+    fn nested_lists(n: usize) -> String {
+        format!("data modify storage a:b x set value {}1{}", "[".repeat(n), "]".repeat(n))
+    }
+
+    #[test]
+    fn nbt_past_512_levels_and_chains_past_the_node_limit_are_errors() {
+        for v in ["1.21.5", "26.3"] {
+            assert_eq!(error_in(v, &nested_compounds(512)), None, "{v}");
+            assert_eq!(error_in(v, &nested_lists(512)), None, "{v}");
+            assert_eq!(error_in(v, &nested_compounds(513)).as_deref(), Some("Resulting NBT too deeply nested"), "{v}");
+            assert_eq!(error_in(v, &nested_lists(513)).as_deref(), Some("Resulting NBT too deeply nested"), "{v}");
+        }
+        let chains = std::thread::Builder::new().stack_size(64 << 20).spawn(|| {
+            let chain = |n: usize| format!("execute {}run say a", "as @s ".repeat(n));
+            (error_in("26.3", &chain(4000)), error_in("26.3", &chain(4100)))
+        });
+        let (within, past) = chains.unwrap().join().unwrap();
+        assert_eq!(within, None);
+        assert_eq!(past.as_deref(), Some("Too many arguments in one command (more than 8192)"));
+    }
+
+    #[test]
+    fn nbt_past_512_levels_is_a_warning_in_releases_whose_server_reads_it() {
+        for v in ["1.20.4", "1.21.4"] {
+            assert_eq!(error_in(v, &nested_compounds(512)), None, "{v}");
+            for line in [nested_compounds(513), nested_lists(513)] {
+                let e = parse_in(v, &line).error.unwrap();
+                assert_eq!((e.severity, e.message), (crate::diag::Severity::Warning, crate::args::nbt::too_deep_to_check()), "{v}");
+            }
+        }
+    }
+
+    #[test]
+    fn long_nbt_paths_are_checked() {
+        assert_eq!(error_in("1.20.4", &format!("data get storage a:b {}a", "a.".repeat(30_000))), None);
+    }
+
     #[test]
     fn slot_names_of_each_release() {
         let slot = |v: &str, name: &str| error_in(v, &format!("item replace entity @s {name} with stone"));
@@ -250,6 +304,34 @@ pub(crate) mod tests {
         assert_eq!(slot("26.1", "mob.inventory.3"), None);
         assert_eq!(error_in("26.3", "execute if items entity @s mob.inventory.* minecraft:stone run say hi"), None);
         assert!(error_in("26.3", "execute if items entity @s villager.* minecraft:stone run say hi").is_some());
+    }
+
+    #[test]
+    fn items_of_entities_without_an_id_are_checked_in_linear_time() {
+        let items = (0..12).fold("{Items:[{Slot:0b,id:\"minecraft:stone\",bogus:1b}]}".to_string(), |inner, _| {
+            format!("{{Items:[{{Slot:0b,id:\"minecraft:stone\",components:{{\"minecraft:entity_data\":{inner}}}}}]}}")
+        });
+        assert_eq!(diagnostics_in("26.3", &format!("data merge entity @s {items}")), ["Unknown key “bogus”"]);
+        let tags = (0..12).fold("{Items:[{Slot:0b,id:\"minecraft:stone\",Count:1b,bogus:1b}]}".to_string(), |inner, _| {
+            format!("{{Items:[{{Slot:0b,id:\"minecraft:pig_spawn_egg\",Count:1b,tag:{{EntityTag:{inner}}}}}]}}")
+        });
+        assert_eq!(diagnostics_in("1.20.4", &format!("data merge entity @s {tags}")), ["Unknown key “bogus”"]);
+    }
+
+    #[test]
+    fn nested_text_components_are_checked_in_linear_time() {
+        let mut snbt = "{x:1}".to_string();
+        for _ in 0..24 {
+            snbt = format!("{{x:1,extra:[{snbt}]}}");
+        }
+        assert!(!diagnostics_in("26.3", &format!("tellraw @a {snbt}")).is_empty());
+        let separators = (0..24).fold("{text:\"a\"}".to_string(), |inner, _| format!("{{text:\"a\",separator:{inner}}}"));
+        assert_eq!(diagnostics_in("26.3", &format!("tellraw @a {separators}")), ["Unknown key “separator”"]);
+        let mut json = "1".to_string();
+        for _ in 0..40 {
+            json = format!(r#"{{"selector":"x","nbt":"y","separator":{json}}}"#);
+        }
+        assert!(error_in("1.20.4", &format!("tellraw @a {json}")).is_some());
     }
 
     #[test]

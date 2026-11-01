@@ -79,9 +79,8 @@ fn position(f: &FileState, index: &LineIndex, uri: &str, start: u32, end: u32, v
     let text = &*f.text;
     let (start_line, start_char) = index.position(text, start);
     let (end_line, end_char) = index.position(text, end);
-    let utf16 = |offset: u32| text[..text.floor_char_boundary(offset as usize)].encode_utf16().count();
     let mut p = json!({
-        "uri": uri, "start": utf16(start), "end": utf16(end),
+        "uri": uri, "start": index.utf16_offset(text, start), "end": index.utf16_offset(text, end),
         "startLine": start_line, "startChar": start_char, "endLine": end_line, "endChar": end_char,
     });
     if let Some(entries) = visibility {

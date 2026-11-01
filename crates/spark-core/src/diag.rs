@@ -37,16 +37,21 @@ pub struct Diagnostic {
     pub message: String,
 }
 
-/// A syntax error that stops parsing of the current command.
+/// A problem that stops parsing of the current command.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseError {
     pub start: u32,
     pub end: u32,
     pub message: String,
+    pub severity: Severity,
 }
 
 impl ParseError {
     pub fn new(start: u32, end: u32, message: impl Into<String>) -> Self {
-        ParseError { start, end: end.max(start), message: message.into() }
+        ParseError { start, end: end.max(start), message: message.into(), severity: Severity::Error }
+    }
+
+    pub fn warning(self) -> Self {
+        ParseError { severity: Severity::Warning, ..self }
     }
 }

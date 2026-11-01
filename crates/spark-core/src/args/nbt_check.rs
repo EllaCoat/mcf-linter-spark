@@ -7,7 +7,9 @@
 //! finished tree. With a `spyglass.json`, the checks the modified Spyglass makes on top (missing
 //! keys of a whole value, its range message) apply.
 
+use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use serde_json::Value;
@@ -20,7 +22,7 @@ use crate::data::VersionData;
 use crate::diag::{Diagnostic, Severity};
 use crate::facts::{Ref, kind};
 use crate::lint::{expected_quote, follows_convention};
-use crate::mcdoc::{ANY, Alt, Field, Holds, IdAttr, Key, Lit, McDoc, NumKind, Range, Resolver, Scope, Tags, Tree, Ty, same_string, strip_minecraft};
+use crate::mcdoc::{ANY, Alt, CHECK_LIMIT_MESSAGE, CheckLimit, Field, Holds, IdAttr, Key, Lit, McDoc, NumKind, Range, Resolver, Scope, Tags, Tree, Ty, same_string, strip_minecraft};
 
 /// The dispatcher an NBT's type comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,10 +121,14 @@ type Stack<'n> = Vec<(&'n NbtNode, Option<&'n str>)>;
 
 /// Checks a parsed tag. `target` is `None` for an NBT without a schema.
 pub fn check_value(data: &VersionData, config: &Config, node: &NbtNode, target: Option<&Target>) -> Vec<Effect> {
+    check_value_with(data, config, node, target, CheckLimit::for_nodes(node_count(node)))
+}
+
+fn check_value_with(data: &VersionData, config: &Config, node: &NbtNode, target: Option<&Target>, limit: CheckLimit) -> Vec<Effect> {
     // A component, a predicate value, particle options and a text component may be any tag, not
     // only a compound.
     let decoded = target.is_some_and(|t| !matches!(t.category, Category::Entity | Category::Block | Category::Item));
-    let checker = Checker { whole: target.is_some_and(|t| t.whole), decoded, ..Checker::new(data, config) };
+    let checker = Checker { whole: target.is_some_and(|t| t.whole), decoded, limit, ..Checker::new(data, config) };
     let mut out = Vec::new();
     let mut stack = vec![(node, None)];
     let alts = match target {
@@ -136,7 +142,27 @@ pub fn check_value(data: &VersionData, config: &Config, node: &NbtNode, target: 
         }
         _ => checker.check_root(&mut out, &mut stack, &alts, target.is_some_and(|t| t.predicate)),
     }
+    limit_warning(&checker, &mut out, node);
     out
+}
+
+fn node_count(root: &NbtNode) -> usize {
+    let (mut nodes, mut pending) = (0, vec![root]);
+    while let Some(node) = pending.pop() {
+        nodes += 1;
+        match &node.value {
+            NbtValue::List(items) | NbtValue::ByteArray(items) | NbtValue::IntArray(items) | NbtValue::LongArray(items) => pending.extend(items),
+            NbtValue::Compound(entries) => pending.extend(entries.iter().map(|e| &e.value)),
+            _ => {}
+        }
+    }
+    nodes
+}
+
+fn limit_warning(checker: &Checker, out: &mut Sink, node: &NbtNode) {
+    if checker.limit.reached() {
+        emit(out, node.start, node.start + 1, Severity::Warning, "nbtCheckLimit", CHECK_LIMIT_MESSAGE.to_string());
+    }
 }
 
 /// `Unit.CODEC`, which reads the value of a test that an item has a component: any compound.
@@ -152,12 +178,25 @@ pub fn check_unit(node: &NbtNode) -> Vec<Effect> {
 
 /// Checks a parsed NBT path. `target` is `None` for a path without a schema (storage).
 pub fn check_path(data: &VersionData, config: &Config, nodes: &[NbtPathNode], target: Option<&Target>) -> Vec<Effect> {
-    let checker = Checker::new(data, config);
-    let mut out = Vec::new();
     let steps = steps(nodes);
+    let filters = steps.iter().filter_map(|s| match s {
+        Step::Filter(node) | Step::Index { filter: Some(node), .. } => Some(node_count(node)),
+        _ => None,
+    });
+    walk_path(data, config, &steps, target, CheckLimit::for_nodes(filters.sum()))
+}
+
+fn walk_path(data: &VersionData, config: &Config, steps: &[Step], target: Option<&Target>, limit: CheckLimit) -> Vec<Effect> {
+    let checker = Checker { limit, ..Checker::new(data, config) };
+    let mut out = Vec::new();
     match target {
-        Some(t) => checker.walk(&mut out, &steps, Some(vec![(root_type(&data.mcdoc, t), checker.r.empty.clone())])),
-        None => checker.walk(&mut out, &steps, None),
+        Some(t) => checker.walk(&mut out, steps, Some(vec![(root_type(&data.mcdoc, t), checker.r.empty.clone())])),
+        None => checker.walk(&mut out, steps, None),
+    }
+    if checker.limit.reached()
+        && let Some(start) = steps.first().map(Step::start)
+    {
+        emit(&mut out, start, start + 1, Severity::Warning, "nbtCheckLimit", CHECK_LIMIT_MESSAGE.to_string());
     }
     out
 }
@@ -174,7 +213,7 @@ pub fn check_modify_value(
     element: bool,
     node: &NbtNode,
 ) -> Vec<Effect> {
-    let checker = Checker { modify: true, whole: target.whole, ..Checker::new(data, config) };
+    let checker = Checker { modify: true, whole: target.whole, limit: CheckLimit::for_nodes(node_count(node)), ..Checker::new(data, config) };
     let steps = steps(path);
     let root = checker.r.resolve::<()>(root_type(&data.mcdoc, target), &checker.r.empty, &[], false, 0);
     let mut end = checker.path_end(&steps, root);
@@ -189,6 +228,7 @@ pub fn check_modify_value(
     let mut out = Vec::new();
     checker.parse_pass(&mut out, &mut stack, &alts);
     checker.validate(&mut out, &mut stack, &alts, false);
+    limit_warning(&checker, &mut out, node);
     out
 }
 
@@ -547,6 +587,12 @@ fn integer_literal(s: &str) -> Option<&str> {
 /// A type the schema gives a tag, with the template arguments it was written with.
 type Typed<'d> = (&'d Ty, Rc<Scope<'d>>);
 
+fn push_distinct<'d>(types: &mut Vec<Typed<'d>>, ty: &'d Ty, scope: &Rc<Scope<'d>>) {
+    if !types.iter().any(|(t, s)| std::ptr::eq(*t, ty) && Rc::ptr_eq(s, scope)) {
+        types.push((ty, scope.clone()));
+    }
+}
+
 struct Checker<'a> {
     r: Resolver<'a>,
     data: &'a VersionData,
@@ -561,11 +607,15 @@ struct Checker<'a> {
     /// options, a text component in SNBT), so a tag of another shape or without a required key
     /// does not load.
     decoded: bool,
+    validated: RefCell<Validated<'a>>,
+    limit: CheckLimit,
 }
+
+type Validated<'a> = Vec<HashMap<(usize, usize, usize, bool), (Sink, Rc<Scope<'a>>)>>;
 
 impl<'a> Checker<'a> {
     fn new(data: &'a VersionData, config: &'a Config) -> Checker<'a> {
-        Checker { r: Resolver::new(&data.mcdoc), data, config, rules: Rules::read(config), modify: false, whole: false, decoded: false }
+        Checker { r: Resolver::new(&data.mcdoc), data, config, rules: Rules::read(config), modify: false, whole: false, decoded: false, validated: RefCell::default(), limit: CheckLimit::new(usize::MAX) }
     }
 
     fn check_root<'n>(&self, out: &mut Sink, stack: &mut Stack<'n>, alts: &[Alt<'a>], predicate: bool) {
@@ -586,7 +636,7 @@ impl<'a> Checker<'a> {
             if let Alt::Struct { fields, .. } = alt
                 && let Some((ty, scope, key_type)) = self.r.field(fields, key, container)
             {
-                types.push((ty, scope));
+                push_distinct(&mut types, ty, &scope);
                 named |= key_type.is_none();
             }
         }
@@ -607,10 +657,14 @@ impl<'a> Checker<'a> {
         let mut out = Vec::new();
         for alt in alts {
             match alt {
-                Alt::Leaf(Ty::List { item, .. }, s, _) => out.push((item.as_ref(), s.clone())),
+                Alt::Leaf(Ty::List { item, .. }, s, _) => push_distinct(&mut out, item, s),
                 Alt::Leaf(Ty::Tuple(items), s, _) => match position {
-                    Some(p) => out.extend(items.get(p).map(|t| (t, s.clone()))),
-                    None => out.extend(items.iter().map(|t| (t, s.clone()))),
+                    Some(p) => {
+                        if let Some(t) = items.get(p) {
+                            push_distinct(&mut out, t, s);
+                        }
+                    }
+                    None => items.iter().for_each(|t| push_distinct(&mut out, t, s)),
                 },
                 _ => {}
             }
@@ -624,13 +678,14 @@ impl<'a> Checker<'a> {
         let node = stack.last().expect("a tag to check").0;
         match &node.value {
             NbtValue::Compound(entries) => {
-                for (i, e) in entries.iter().enumerate() {
+                let mut seen = HashSet::new();
+                for e in entries {
                     self.quote_problems(out, &self.rules.key_quote, e.key_quote, &e.key, e.key_start, e.key_end);
                     let (types, named) = self.field_types(alts, &e.key, stack);
                     if !named {
                         self.check_naming(out, e);
                     }
-                    if entries[..i].iter().any(|p| p.key == e.key) {
+                    if !seen.insert(e.key.as_str()) {
                         let message = format!("Duplicate key {}", quoted(&e.key));
                         emit(out, e.key_start, e.key_end, Severity::Warning, "nbtDuplicateKey", message);
                     }
@@ -769,6 +824,27 @@ impl<'a> Checker<'a> {
         out.extend(best.map(|(b, _)| b).unwrap_or_default());
     }
 
+    fn validate_typed<'n>(&self, out: &mut Sink, stack: &mut Stack<'n>, ty: &'a Ty, scope: &Rc<Scope<'a>>, pred: bool) {
+        let node = stack.last().expect("a tag to check").0;
+        let depth = stack.len();
+        let key = (node as *const NbtNode as usize, ty as *const Ty as usize, Rc::as_ptr(scope) as usize, pred);
+        if let Some((effects, _)) = self.validated.borrow().get(depth).and_then(|validated| validated.get(&key)) {
+            out.extend(effects.iter().cloned());
+            return;
+        }
+        if !self.limit.take() {
+            return;
+        }
+        let alts = self.r.resolve(ty, scope, stack, false, 0);
+        let mut effects = Vec::new();
+        self.validate(&mut effects, stack, &alts, pred);
+        out.extend(effects.iter().cloned());
+        let mut validated = self.validated.borrow_mut();
+        // ponytail: keeps the results one level below the tag, so types that differ between two alternatives and meet again further down are checked once per alternative; keep more levels if a schema nests that way
+        validated.resize_with(depth + 2, HashMap::new);
+        validated[depth].insert(key, (effects, scope.clone()));
+    }
+
     fn validate_one<'n>(&self, out: &mut Sink, stack: &mut Stack<'n>, alt: &Alt<'a>, pred: bool) {
         let node = stack.last().expect("a tag to check").0;
         match alt {
@@ -813,8 +889,7 @@ impl<'a> Checker<'a> {
                         }
                         for element in items {
                             stack.push((element, None));
-                            let alts = self.r.resolve(item, scope, stack, false, 0);
-                            self.validate(out, stack, &alts, pred);
+                            self.validate_typed(out, stack, item, scope, pred);
                             stack.pop();
                         }
                     }
@@ -827,8 +902,7 @@ impl<'a> Checker<'a> {
                         self.check_length(out, node, &exact, items.len(), self.rules.list_length, "nbtListLengthCheck");
                         for (element, t) in items.iter().zip(types) {
                             stack.push((element, None));
-                            let alts = self.r.resolve(t, scope, stack, false, 0);
-                            self.validate(out, stack, &alts, pred);
+                            self.validate_typed(out, stack, t, scope, pred);
                             stack.pop();
                         }
                     }
@@ -848,17 +922,18 @@ impl<'a> Checker<'a> {
         open: bool,
         pred: bool,
     ) {
-        for (i, first) in entries.iter().enumerate() {
+        let last: HashMap<&str, usize> = entries.iter().enumerate().map(|(i, e)| (e.key.as_str(), i)).collect();
+        let mut seen = HashSet::new();
+        for first in entries {
             // `Object.keys` lists a repeated key once, with the last value and the last key's range.
-            if entries[..i].iter().any(|p| p.key == first.key) {
+            if !seen.insert(first.key.as_str()) {
                 continue;
             }
-            let Some(entry) = entries.iter().rev().find(|e| e.key == first.key) else { continue };
+            let entry = &entries[last[first.key.as_str()]];
             match self.r.field(fields, &entry.key, stack) {
                 Some((ty, scope, _)) => {
                     stack.push((&entry.value, Some(&entry.key)));
-                    let alts = self.r.resolve(ty, &scope, stack, false, 0);
-                    self.validate(out, stack, &alts, pred);
+                    self.validate_typed(out, stack, ty, &scope, pred);
                     stack.pop();
                 }
                 None if open => {}
@@ -1065,7 +1140,7 @@ impl<'a> Checker<'a> {
             Holds::Command | Holds::Objective => return,
         };
         if let Err(e) = result {
-            effects.push(Effect::Diag(Diagnostic { start: e.start, end: e.end, severity: Severity::Error, code: "syntax", message: e.message }));
+            effects.push(Effect::Diag(Diagnostic { start: e.start, end: e.end, severity: e.severity, code: "syntax", message: e.message }));
         }
         for effect in &mut effects {
             let range = match effect {
@@ -1275,7 +1350,13 @@ impl<'a> Checker<'a> {
     /// `None` outside it. Where the schema allows several types, a step that any of them takes is
     /// accepted.
     fn walk(&self, out: &mut Sink, steps: &[Step], types: Option<Vec<Typed<'a>>>) {
-        let Some((step, rest)) = steps.split_first() else { return };
+        let mut types = types;
+        for (i, step) in steps.iter().enumerate() {
+            types = self.step(out, step, &steps[i + 1..], types);
+        }
+    }
+
+    fn step(&self, out: &mut Sink, step: &Step, rest: &[Step], types: Option<Vec<Typed<'a>>>) -> Option<Vec<Typed<'a>>> {
         let resolved: Vec<Alt<'a>> = types.iter().flatten().flat_map(|(t, s)| self.r.resolve::<()>(t, s, &[], false, 0)).collect();
         let alts = schema(&resolved);
         let compound = alts.is_some_and(|a| a.iter().any(|x| matches!(x, Alt::Struct { .. })));
@@ -1296,7 +1377,7 @@ impl<'a> Checker<'a> {
                         next = Some(found).filter(|f| !f.is_empty());
                     }
                 }
-                self.walk(out, rest, next);
+                next
             }
             Step::Filter(node) => {
                 if alts.is_some() && !compound {
@@ -1304,7 +1385,7 @@ impl<'a> Checker<'a> {
                 }
                 let filter_types = if compound { types.as_deref().unwrap_or_default() } else { &[] };
                 self.check_filter(out, node, filter_types);
-                self.walk(out, rest, types);
+                types
             }
             Step::Index { start, end, filter } => {
                 let elements = alts.map(|a| self.alt_elements(a, None)).unwrap_or_default();
@@ -1325,7 +1406,7 @@ impl<'a> Checker<'a> {
                 if alts.is_some() && !is_list && rest.first().is_some_and(|next| next.start() > *end) {
                     sub(out, *end);
                 }
-                self.walk(out, rest, Some(elements).filter(|e| !e.is_empty()));
+                Some(elements).filter(|e| !e.is_empty())
             }
         }
     }

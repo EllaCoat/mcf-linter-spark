@@ -82,14 +82,21 @@ pub fn modern(data: &VersionData) -> bool {
     data.at_least(&[1, 21, 5])
 }
 
+pub const MAX_DEPTH: usize = 512;
+pub const TOO_DEEP: &str = "Resulting NBT too deeply nested";
+
+pub fn too_deep_to_check() -> String {
+    format!("Stopped checking from here: the NBT is nested deeper than {MAX_DEPTH} levels")
+}
+
 /// `TagParser.readStruct`. Leading whitespace is skipped.
 pub fn parse_compound(r: &mut Reader, modern: bool) -> PResult<NbtNode> {
-    if modern { snbt::parse_compound(r) } else { read_struct(r) }
+    if modern { snbt::parse_compound(r) } else { read_struct(r, 0) }
 }
 
 /// `TagParser.readValue`. Leading whitespace is skipped.
 pub fn parse_tag(r: &mut Reader, modern: bool) -> PResult<NbtNode> {
-    if modern { snbt::parse_tag(r) } else { read_value(r) }
+    if modern { snbt::parse_tag(r) } else { read_value(r, 0) }
 }
 
 /// `NbtPathArgument.parse`. Stops at a space or the end of the line.
@@ -205,17 +212,18 @@ fn has_element_separator(r: &mut Reader) -> bool {
     }
 }
 
-fn read_value(r: &mut Reader) -> PResult<NbtNode> {
+fn read_value(r: &mut Reader, depth: usize) -> PResult<NbtNode> {
     skip_ws(r);
     match r.peek() {
         None => Err(r.error("Expected value")),
-        Some(b'{') => read_struct(r),
-        Some(b'[') => read_list(r),
+        Some(b'{' | b'[') if depth >= MAX_DEPTH => Err(r.error(too_deep_to_check()).warning()),
+        Some(b'{') => read_struct(r, depth),
+        Some(b'[') => read_list(r, depth),
         Some(_) => read_typed_value(r),
     }
 }
 
-fn read_struct(r: &mut Reader) -> PResult<NbtNode> {
+fn read_struct(r: &mut Reader, depth: usize) -> PResult<NbtNode> {
     skip_ws(r);
     let start = r.pos;
     r.expect(b'{')?;
@@ -226,7 +234,7 @@ fn read_struct(r: &mut Reader) -> PResult<NbtNode> {
         let (key, key_quote) = read_key(r)?;
         let key_end = r.offset();
         expect(r, b':')?;
-        let value = read_value(r)?;
+        let value = read_value(r, depth + 1)?;
         entries.push(NbtEntry { key, key_quote, key_start: r.offset_of(key_pos), key_end, value });
         if !has_element_separator(r) {
             break;
@@ -266,15 +274,15 @@ fn read_typed_value(r: &mut Reader) -> PResult<NbtNode> {
     Ok(finish(r, start, classify(text)))
 }
 
-fn read_list(r: &mut Reader) -> PResult<NbtNode> {
+fn read_list(r: &mut Reader, depth: usize) -> PResult<NbtNode> {
     let mut ahead = r.rest().chars().skip(1);
     match (ahead.next(), ahead.next()) {
-        (Some(kind), Some(';')) if !matches!(kind, '"' | '\'') => read_array_tag(r, kind),
-        _ => read_list_tag(r),
+        (Some(kind), Some(';')) if !matches!(kind, '"' | '\'') => read_array_tag(r, kind, depth),
+        _ => read_list_tag(r, depth),
     }
 }
 
-fn read_list_tag(r: &mut Reader) -> PResult<NbtNode> {
+fn read_list_tag(r: &mut Reader, depth: usize) -> PResult<NbtNode> {
     let start = r.pos;
     r.pos += 1;
     skip_ws(r);
@@ -284,7 +292,7 @@ fn read_list_tag(r: &mut Reader) -> PResult<NbtNode> {
     let mut items: Vec<NbtNode> = Vec::new();
     while r.peek() != Some(b']') {
         let item_pos = r.pos;
-        let item = read_value(r)?;
+        let item = read_value(r, depth + 1)?;
         if let Some(first) = items.first()
             && first.value.type_name() != item.value.type_name()
         {
@@ -303,7 +311,7 @@ fn read_list_tag(r: &mut Reader) -> PResult<NbtNode> {
     Ok(finish(r, start, NbtValue::List(items)))
 }
 
-fn read_array_tag(r: &mut Reader, kind: char) -> PResult<NbtNode> {
+fn read_array_tag(r: &mut Reader, kind: char, depth: usize) -> PResult<NbtNode> {
     let start = r.pos;
     r.pos += 1;
     let kind_pos = r.pos;
@@ -326,7 +334,7 @@ fn read_array_tag(r: &mut Reader, kind: char) -> PResult<NbtNode> {
     let mut items = Vec::new();
     while r.peek() != Some(b']') {
         let item_pos = r.pos;
-        let item = read_value(r)?;
+        let item = read_value(r, depth + 1)?;
         if item.value.type_name() != element_name {
             let message = format!("Can't insert {} into {array_name}", item.value.type_name());
             return Err(r.error_span(item_pos, message));

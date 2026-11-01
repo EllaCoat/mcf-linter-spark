@@ -5,14 +5,15 @@
 //! Where the schema cannot be followed (an unknown reference or dispatcher key), the value is
 //! accepted.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::data::VersionData;
 use crate::diag::{Diagnostic, Severity};
 use crate::facts::{Kind, Ref, full_id};
 use crate::json::{self, Json, Node, Reading};
-use crate::mcdoc::{self, Alt, Field, Holds, IdAttr, Key, Lit, McDoc, NumKind, Range, Resolver, Scope, Tags, Tree, Ty, id_shape, same_string, strip_minecraft};
+use crate::mcdoc::{self, Alt, CHECK_LIMIT_MESSAGE, CheckLimit, Field, Holds, IdAttr, Key, Lit, McDoc, NumKind, Range, Resolver, Scope, Tags, Tree, Ty, id_shape, same_string, strip_minecraft};
 
 /// The schema of a data pack JSON file of this kind, if the schema covers it.
 pub fn schema(kind: Kind, doc: &McDoc) -> Option<Ty> {
@@ -46,13 +47,33 @@ pub fn check(text: &str, reading: Reading, schema: &Ty, doc: &McDoc, data: &Vers
             return Checked { diags: vec![diag], refs: Vec::new() };
         }
     };
-    let checker = Checker::new(doc, data, text);
-    let mut stack = vec![(&node, None)];
-    let out = checker.value(&mut stack, schema, &checker.r.empty);
+    let checker = Checker { limit: CheckLimit::for_nodes(node_count(&node)), ..Checker::new(doc, data, text) };
+    checked(&checker, &node, schema)
+}
+
+fn checked<'d>(checker: &Checker<'d>, node: &Node, schema: &'d Ty) -> Checked {
+    let mut stack = vec![(node, None)];
+    let mut out = checker.value(&mut stack, schema, &checker.r.empty);
+    if checker.limit.reached() {
+        out.problem(span(node), Severity::Warning, "jsonCheckLimit", CHECK_LIMIT_MESSAGE.to_string());
+    }
     Checked { diags: out.problems, refs: out.refs }
 }
 
-#[derive(Default)]
+fn node_count(root: &Node) -> usize {
+    let (mut nodes, mut pending) = (0, vec![root]);
+    while let Some(node) = pending.pop() {
+        nodes += 1;
+        match &node.json {
+            Json::Array(items) => pending.extend(items),
+            Json::Object(members) => pending.extend(members.iter().map(|(_, v)| v)),
+            _ => {}
+        }
+    }
+    nodes
+}
+
+#[derive(Clone, Default)]
 struct Out {
     problems: Vec<Diagnostic>,
     refs: Vec<Ref>,
@@ -111,16 +132,20 @@ fn span(node: &Node) -> (usize, usize) {
     }
 }
 
+type Results<'d> = Vec<HashMap<(usize, usize, usize, bool), (Out, Rc<Scope<'d>>)>>;
+
 struct Checker<'d> {
     r: Resolver<'d>,
     data: &'d VersionData,
     text: &'d str,
     nbt: Cell<u32>,
+    checked: RefCell<Results<'d>>,
+    limit: CheckLimit,
 }
 
 impl<'d> Checker<'d> {
     fn new(doc: &'d McDoc, data: &'d VersionData, text: &'d str) -> Checker<'d> {
-        Checker { r: Resolver::new(doc), data, text, nbt: Cell::new(0) }
+        Checker { r: Resolver::new(doc), data, text, nbt: Cell::new(0), checked: RefCell::default(), limit: CheckLimit::new(usize::MAX) }
     }
 
     fn inside_quotes(&self, (start, end): (usize, usize)) -> (usize, usize) {
@@ -131,8 +156,22 @@ impl<'d> Checker<'d> {
     }
 
     fn value<'n>(&self, stack: &mut Stack<'n>, ty: &'d Ty, scope: &Rc<Scope<'d>>) -> Out {
+        let node = stack.last().expect("a value to check").0;
+        let depth = stack.len();
+        let key = (node as *const Node as usize, ty as *const Ty as usize, Rc::as_ptr(scope) as usize, self.nbt.get() > 0);
+        if let Some((out, _)) = self.checked.borrow().get(depth).and_then(|checked| checked.get(&key)) {
+            return out.clone();
+        }
+        if !self.limit.take() {
+            return Out::default();
+        }
         let alts = self.r.resolve(ty, scope, stack, false, 0);
-        self.alternatives(stack, &alts)
+        let out = self.alternatives(stack, &alts);
+        let mut checked = self.checked.borrow_mut();
+        // ponytail: keeps the results one level below the value, so types that differ between two alternatives and meet again further down are checked once per alternative; keep more levels if a schema nests that way
+        checked.resize_with(depth + 2, HashMap::new);
+        checked[depth].insert(key, (out.clone(), scope.clone()));
+        out
     }
 
     fn alternatives<'n>(&self, stack: &mut Stack<'n>, alts: &[Alt<'d>]) -> Out {
@@ -231,9 +270,10 @@ impl<'d> Checker<'d> {
         open: bool,
         out: &mut Out,
     ) {
-        for (i, (name, value)) in members.iter().enumerate() {
+        let mut seen = HashSet::new();
+        for (name, value) in members {
             let key_span = value.key.unwrap_or((value.start, value.start));
-            if members[..i].iter().any(|(other, _)| other == name) {
+            if !seen.insert(name.as_str()) {
                 out.problem(key_span, Severity::Warning, "jsonDuplicateKey", format!("Duplicate key “{name}”; the last one is used"));
             }
             match self.r.field(fields, name, stack) {
@@ -665,6 +705,50 @@ mod tests {
         let mut out: Vec<String> = c.diags.iter().map(|d| format!("{} {}", d.code, d.message)).collect();
         out.extend(c.refs.iter().map(|r| format!("ref {} {}", r.kind, r.id)));
         out
+    }
+
+    #[test]
+    fn a_value_past_the_check_limit_is_checked_in_part_with_a_warning() {
+        let data = crate::data::for_version("1.20.4").unwrap();
+        let doc = &data.mcdoc;
+        let text = r#"{"condition": "minecraft:any_of", "terms": [{"condition": "minecraft:random_chance", "chance": 0.5}]}"#;
+        let node = json::parse_document(text, Reading::Strict).unwrap();
+        let schema = schema("predicate", doc).unwrap();
+        let codes = |c: Checked| c.diags.into_iter().map(|d| d.code).collect::<Vec<_>>();
+        assert!(codes(checked(&Checker::new(doc, data, text), &node, &schema)).is_empty());
+        assert_eq!(codes(checked(&Checker { limit: CheckLimit::new(1), ..Checker::new(doc, data, text) }, &node, &schema)), ["jsonCheckLimit"]);
+    }
+
+    #[test]
+    fn nested_text_components_are_checked_once_per_level() {
+        let advancement = |inner: &str| {
+            let mut title = inner.to_string();
+            for _ in 0..24 {
+                title = format!(r#"{{"text": "a", "extra": [{title}]}}"#);
+            }
+            format!(r#"{{"criteria": {{"a": {{"trigger": "minecraft:tick"}}}}, "display": {{"icon": {{"id": "minecraft:stone"}}, "title": {title}, "description": "a"}}}}"#)
+        };
+        assert!(run_in("1.21", "advancement", &advancement(r#"{"text": "a"}"#)).is_empty());
+        assert_eq!(run_in("1.21", "advancement", &advancement(r#"{"text": "a", "bogus": 1}"#)), ["jsonUnknownKey Unknown key “bogus”"]);
+        let title = (0..24).fold(r#"{"text": "a"}"#.to_string(), |inner, _| format!(r#"{{"text": "a", "separator": {inner}}}"#));
+        let separators = format!(r#"{{"criteria": {{"a": {{"trigger": "minecraft:tick"}}}}, "display": {{"icon": {{"item": "minecraft:stone"}}, "title": {title}, "description": "a"}}}}"#);
+        assert_eq!(run_in("1.20.4", "advancement", &separators), ["jsonUnknownKey Unknown key “separator”"]);
+    }
+
+    #[test]
+    fn duplicate_keys_of_a_large_object_are_found_in_linear_time() {
+        let members: Vec<String> = (0..20_000).map(|i| format!(r#""c{i}": {{"trigger": "minecraft:tick"}}"#)).collect();
+        let text = format!(r#"{{"criteria": {{{}, "c0": {{"trigger": "minecraft:tick"}}}}}}"#, members.join(", "));
+        assert_eq!(run("advancement", &text), ["jsonDuplicateKey Duplicate key “c0”; the last one is used"]);
+    }
+
+    #[test]
+    fn items_of_entities_without_an_id_are_checked_in_linear_time() {
+        let entity = (0..12).fold(r#"{"id": "minecraft:pig", "bogus": 1}"#.to_string(), |inner, _| {
+            format!(r#"{{"Items": [{{"Slot": 0, "id": "minecraft:stone", "components": {{"minecraft:entity_data": {inner}}}}}]}}"#)
+        });
+        let modifier = format!(r#"{{"type": "minecraft:set_components", "components": {{"minecraft:entity_data": {entity}}}}}"#);
+        assert_eq!(run_in("26.3", "item_modifier", &modifier), ["jsonUnknownKey Unknown key “Slot”", "jsonUnknownKey Unknown key “id”", "jsonUnknownKey Unknown key “components”", "jsonMissingKey Missing key “id”"]);
     }
 
     #[test]

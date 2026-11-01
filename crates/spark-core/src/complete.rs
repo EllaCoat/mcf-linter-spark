@@ -55,7 +55,7 @@ pub fn complete(line: &str, data: &VersionData, config: &Config, source: &dyn So
     }
     let start = indent + usize::from(rest.starts_with('$'));
     let mut w = Walker { data, config, src: &line[start..], source, out: Vec::new() };
-    w.children(ROOT, 0, &mut Vec::new(), &mut Vec::new());
+    w.children(ROOT, 0, &mut Vec::new(), &mut Vec::new(), 0);
     let mut out = w.out;
     for c in &mut out {
         c.start += start;
@@ -193,7 +193,10 @@ struct Walker<'a, 's> {
 }
 
 impl<'a> Walker<'a, '_> {
-    fn children(&mut self, node: NodeId, pos: usize, path: &mut Vec<PathNode<'a>>, values: &mut Vec<ArgValue>) {
+    fn children(&mut self, node: NodeId, pos: usize, path: &mut Vec<PathNode<'a>>, values: &mut Vec<ArgValue>, depth: usize) {
+        if depth >= crate::command::MAX_NODES {
+            return;
+        }
         let data = self.data;
         let tree = &data.tree;
         let n = tree.node(node);
@@ -208,7 +211,7 @@ impl<'a> Walker<'a, '_> {
                 }
             }
         } else if let Some(&lit) = n.literals.iter().find(|&&c| tree.node(c).name() == word) {
-            self.after(lit, word_end, path, values);
+            self.after(lit, word_end, path, values, depth);
             return;
         }
         for &arg in &n.arguments {
@@ -223,7 +226,7 @@ impl<'a> Walker<'a, '_> {
             match result {
                 Ok(()) if reader.pos < len => {
                     if self.src.as_bytes()[reader.pos] == b' ' {
-                        self.after(arg, reader.pos, path, values);
+                        self.after(arg, reader.pos, path, values, depth);
                     }
                 }
                 // The argument reaches the cursor: it is still being typed.
@@ -243,7 +246,7 @@ impl<'a> Walker<'a, '_> {
     }
 
     /// Continues after `node`, which the line has consumed up to the space at `end`.
-    fn after(&mut self, node: NodeId, end: usize, path: &mut Vec<PathNode<'a>>, values: &mut Vec<ArgValue>) {
+    fn after(&mut self, node: NodeId, end: usize, path: &mut Vec<PathNode<'a>>, values: &mut Vec<ArgValue>, depth: usize) {
         let data = self.data;
         let tree = &data.tree;
         let n = tree.node(node);
@@ -252,10 +255,10 @@ impl<'a> Walker<'a, '_> {
             return;
         }
         if n.redirect == Some(ROOT) {
-            self.children(next, end + 1, &mut Vec::new(), &mut Vec::new());
+            self.children(next, end + 1, &mut Vec::new(), &mut Vec::new(), depth + 1);
         } else {
             path.push(PathNode { name: n.name(), literal: matches!(n.kind, NodeKind::Literal(_)) });
-            self.children(next, end + 1, path, values);
+            self.children(next, end + 1, path, values, depth + 1);
             path.pop();
         }
     }
@@ -899,6 +902,8 @@ fn selector_type(options: &str) -> Option<String> {
     })
 }
 
+const MAX_STORAGE_KEYS: usize = 64;
+
 /// Adds the NBT paths that `storage <id> <path>` uses in a function's text, with every
 /// prefix (`Return`, `Return.Difficulty`), by storage id. Elements and filters are dropped.
 /// IMP-Doc lines such as `# @input storage api: Argument.ID` count as well.
@@ -926,6 +931,7 @@ pub fn collect_storage_paths(text: &str, out: &mut HashMap<String, BTreeSet<Stri
             if keys.iter().any(|k| !k.bytes().all(crate::reader::is_allowed_in_unquoted)) {
                 continue;
             }
+            keys.truncate(MAX_STORAGE_KEYS);
             let set = out.entry(full_id(w[1])).or_default();
             for n in 1..=keys.len() {
                 set.insert(keys[..n].join("."));
@@ -1169,6 +1175,13 @@ mod tests {
         assert!(has("data get storage api: Return.", "Difficulty", 29));
         assert!(has("data get storage api: Argument.Damage[0].", "Amount", 41));
         assert!(!has("data get storage example:temp ", "Argument", 30));
+    }
+
+    #[test]
+    fn storage_paths_are_collected_up_to_the_key_limit() {
+        let mut out = HashMap::new();
+        collect_storage_paths(&format!("data get storage a:b {}a\n", "a.".repeat(10_000)), &mut out);
+        assert_eq!(out["a:b"].len(), MAX_STORAGE_KEYS);
     }
 
     #[test]
