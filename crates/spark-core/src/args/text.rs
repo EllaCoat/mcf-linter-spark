@@ -125,6 +125,15 @@ fn color(node: &Node) -> Check {
     if valid { Ok(()) } else { fail(node, format!("Invalid color: {s}")) }
 }
 
+/// `ExtraCodecs.ARGB_COLOR_CODEC` (1.21.4): an int, or a list of four floats.
+fn shadow_color(node: &Node) -> Check {
+    match &node.json {
+        _ if is_bool_or_number(node) => Ok(()),
+        Json::Array(items) if items.len() == 4 && items.iter().all(is_bool_or_number) => Ok(()),
+        _ => fail(node, "Not a number or a list of four numbers"),
+    }
+}
+
 fn click_event(node: &Node) -> Check {
     let Json::Object(fields) = &node.json else {
         return fail(node, "Not a JSON object");
@@ -392,6 +401,11 @@ impl Checker<'_, '_> {
     fn style_fields(&mut self, fields: &Fields) -> Check {
         if let Some(value) = get(fields, "color") {
             color(value)?;
+        }
+        if self.cx.data.at_least(&[1, 21, 4])
+            && let Some(value) = get(fields, "shadow_color")
+        {
+            shadow_color(value)?;
         }
         for key in ["bold", "italic", "underlined", "strikethrough", "obfuscated"] {
             if let Some(value) = get(fields, key)

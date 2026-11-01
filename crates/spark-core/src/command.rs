@@ -362,6 +362,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn json_text_has_a_shadow_color_from_1_21_4() {
+        let line = |color: &str| format!(r#"tellraw @s {{"text":"a","shadow_color":{color}}}"#);
+        for v in ["1.20.4", "1.21.3"] {
+            assert_eq!(error_in(v, &line("\"red\"")), None, "{v}");
+        }
+        assert_eq!(error_in("1.21.4", &line("-1")), None);
+        assert_eq!(error_in("1.21.4", &line("[1,0,0,1]")), None);
+        for color in ["\"red\"", "[1,0,0]"] {
+            assert_eq!(error_in("1.21.4", &line(color)).as_deref(), Some("Invalid chat component: Not a number or a list of four numbers"), "{color}");
+        }
+    }
+
+    #[test]
     fn inline_elements_are_checked_against_their_type() {
         for v in ["1.20.5", "1.21.5"] {
             assert_eq!(diagnostics_in(v, "loot give @s loot {pools:[]}"), none(), "{v}");
