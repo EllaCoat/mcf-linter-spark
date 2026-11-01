@@ -87,17 +87,87 @@ pub fn swizzle(r: &mut Reader) -> PResult<()> {
 pub fn item_slot(r: &mut Reader) -> PResult<()> {
     let start = r.pos;
     let s = r.read_unquoted();
-    let indexed = |prefix: &str, count: u32| {
-        s.strip_prefix(prefix)
-            .and_then(|n| n.parse::<u32>().ok().filter(|_| !n.starts_with('+') && (n == "0" || !n.starts_with('0'))))
-            .is_some_and(|n| n < count)
+    if is_slot(s) { Ok(()) } else { Err(r.error_span(start, format!("Unknown slot '{s}'"))) }
+}
+
+/// `item_slots`: a slot, or a group of slots (`container.*`, `armor.*`).
+pub fn item_slots(r: &mut Reader) -> PResult<()> {
+    let start = r.pos;
+    let s = r.read_word();
+    if is_slot_range(s) { Ok(()) } else { Err(r.error_span(start, format!("Unknown slot '{s}'"))) }
+}
+
+/// The slot names of every version from 1.20.5, as `SlotRanges` lists them.
+fn is_slot_range(s: &str) -> bool {
+    const GROUPS: &[&str] =
+        &["container", "hotbar", "inventory", "enderchest", "villager", "mob.inventory", "horse", "weapon", "armor", "player.crafting"];
+    s.strip_suffix(".*").is_some_and(|g| GROUPS.contains(&g))
+        || is_slot(s)
+        || indexed(s, "mob.inventory.", 8)
+        || indexed(s, "player.crafting.", 4)
+        || matches!(s, "armor.body" | "player.cursor" | "contents" | "saddle")
+}
+
+/// `slot_source`: a slot range, else a slot source as `ResourceOrIdArgument` reads it.
+pub fn slot_source(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
+    let start = r.pos;
+    if is_slot_range(r.read_word()) {
+        return Ok(());
+    }
+    r.pos = start;
+    resource_or_id(r, cx, "slot_source")
+}
+
+/// `ResourceOrIdArgument`: an id of the registry, or the element written inline in SNBT.
+pub fn resource_or_id(r: &mut Reader, cx: &mut ArgCtx, registry: &str) -> PResult<()> {
+    if !r.peek().is_some_and(super::is_allowed_in_resource_location) {
+        return super::nbt::parse_tag(r).map(|_| ());
+    }
+    let (start, id) = read_resource_location(r)?;
+    let (s, e) = (r.offset_of(start), r.offset());
+    let kind = match registry {
+        "loot_table" => kind::LOOT_TABLE,
+        "predicate" => kind::PREDICATE,
+        "item_modifier" => kind::ITEM_MODIFIER,
+        _ => return Ok(()),
     };
-    let ok = indexed("container.", 54)
-        || indexed("hotbar.", 9)
-        || indexed("inventory.", 27)
-        || indexed("enderchest.", 27)
-        || indexed("villager.", 8)
-        || indexed("horse.", 15)
+    cx.reference(kind, id, s, e);
+    Ok(())
+}
+
+/// `resource_selector`: an id pattern with `*` and `?`.
+pub fn resource_selector(r: &mut Reader) -> PResult<()> {
+    let pattern = r.read_while(|b| super::is_allowed_in_resource_location(b) || matches!(b, b'*' | b'?'));
+    if pattern.is_empty() { Err(r.error("Expected a resource selector")) } else { Ok(()) }
+}
+
+/// `hex_color`: `RGB` or `RRGGBB`.
+pub fn hex_color(r: &mut Reader) -> PResult<()> {
+    let start = r.pos;
+    let s = r.read_unquoted();
+    if matches!(s.len(), 3 | 6) && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(r.error_span(start, format!("Invalid hex color '{s}'")))
+    }
+}
+
+pub const SWING_ANIMATIONS: &[&str] = &["none", "whack", "stab"];
+
+/// `<prefix><n>` with `n` below `count`, written without a sign or leading zeros.
+fn indexed(s: &str, prefix: &str, count: u32) -> bool {
+    s.strip_prefix(prefix)
+        .and_then(|n| n.parse::<u32>().ok().filter(|_| !n.starts_with('+') && (n == "0" || !n.starts_with('0'))))
+        .is_some_and(|n| n < count)
+}
+
+fn is_slot(s: &str) -> bool {
+    indexed(s, "container.", 54)
+        || indexed(s, "hotbar.", 9)
+        || indexed(s, "inventory.", 27)
+        || indexed(s, "enderchest.", 27)
+        || indexed(s, "villager.", 8)
+        || indexed(s, "horse.", 15)
         || matches!(
             s,
             "weapon"
@@ -110,8 +180,7 @@ pub fn item_slot(r: &mut Reader) -> PResult<()> {
                 | "horse.saddle"
                 | "horse.armor"
                 | "horse.chest"
-        );
-    if ok { Ok(()) } else { Err(r.error_span(start, format!("Unknown slot '{s}'"))) }
+        )
 }
 
 /// A message: plain text in which `@p`, `@a`, `@r`, `@s` and `@e` start selectors.
@@ -326,22 +395,26 @@ pub fn uuid(r: &mut Reader) -> PResult<()> {
     }
 }
 
-/// `minecraft:resource` and friends. Built-in registries are checked here;
-/// data-driven ones (damage types) become references.
+/// `minecraft:resource` and friends. Built-in registries are checked here; ids of data pack
+/// contents become references for the kinds the project resolves (damage types, advancements,
+/// recipes).
 pub fn resource(r: &mut Reader, cx: &mut ArgCtx, registry: &str, allow_tag: bool) -> PResult<()> {
     let start = r.pos;
     let tag = allow_tag && r.try_consume(b'#');
     let (_, id) = read_resource_location(r)?;
     let (s, e) = (r.offset_of(start), r.offset());
+    let short = registry.strip_prefix("minecraft:").unwrap_or(registry);
     if tag {
         if registry == "minecraft:damage_type" {
             cx.reference(kind::DAMAGE_TYPE_TAG, id, s, e);
         }
+    } else if let Some(k) = crate::datajson::file_kind(short) {
+        if matches!(k, kind::DAMAGE_TYPE | kind::ADVANCEMENT | kind::RECIPE) {
+            cx.reference(k, id, s, e);
+        }
     } else if cx.data.registries.contains_key(registry) {
         cx.check_registry(registry, id, s, e);
         cx.values.push(super::ArgValue::Id(crate::facts::full_id(id)));
-    } else if registry == "minecraft:damage_type" {
-        cx.reference(kind::DAMAGE_TYPE, id, s, e);
     }
     Ok(())
 }

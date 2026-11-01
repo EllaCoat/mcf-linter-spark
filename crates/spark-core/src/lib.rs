@@ -16,3 +16,4 @@ pub mod project;
 pub mod reader;
 pub mod symbols;
 pub mod tree;
+pub mod version;

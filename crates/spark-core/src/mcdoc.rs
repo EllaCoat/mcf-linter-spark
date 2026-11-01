@@ -10,6 +10,7 @@ use std::rc::Rc;
 use serde_json::Value;
 
 use crate::facts::full_id;
+use crate::version;
 
 pub struct McDoc {
     pub types: HashMap<String, Ty>,
@@ -188,7 +189,7 @@ pub enum Tags {
 
 impl McDoc {
     pub fn from_json(root: &Value, version: &str) -> Result<McDoc, String> {
-        let cx = Loader { version: parse_version(version) };
+        let cx = Loader { version: version::parse(version) };
         let types = root
             .get("mcdoc")
             .and_then(Value::as_object)
@@ -286,13 +287,13 @@ impl McDoc {
     /// Where the schema is stricter than the game reads data packs, or misses a version.
     fn relax(&mut self, version: &[u32]) {
         // The chest block is dispatched to its block entity only since 1.21.9, where copper chests came.
-        if cmp_version(version, &[1, 21, 9]).is_lt()
+        if version::cmp(version, &[1, 21, 9]).is_lt()
             && let Some(blocks) = self.dispatchers.get_mut("minecraft:block")
         {
             let chest = Ty::Dispatcher { registry: "minecraft:block_entity".into(), index: vec![Index::Static("chest".into())] };
             blocks.entry("chest".into()).or_insert(chest);
         }
-        if cmp_version(version, &[1, 20, 5]).is_lt()
+        if version::cmp(version, &[1, 20, 5]).is_lt()
             && let Some(Ty::Struct(fields)) = self.types.get_mut("::java::world::entity::area_effect_cloud::AreaEffectCloud")
         {
             for f in fields {
@@ -308,7 +309,7 @@ impl McDoc {
             let uuid = Ty::Array { kind: NumKind::Int, range: None, len: Some(Range { min: Some(4.0), max: Some(4.0), min_exclusive: false, max_exclusive: false }) };
             fields.push(Field::Pair { key: Key::Name("UUID".into()), ty: uuid, optional: true, desc: None });
         }
-        if cmp_version(version, &[1, 20, 5]).is_lt() {
+        if version::cmp(version, &[1, 20, 5]).is_lt() {
             for (path, key) in [
                 ("::java::world::entity::mob::breedable::horse::Horse", "ArmorItem"),
                 ("::java::world::entity::mob::breedable::horse::Llama", "DecorItem"),
@@ -319,7 +320,7 @@ impl McDoc {
                 }
             }
         }
-        if cmp_version(version, &[1, 20, 5]).is_lt()
+        if version::cmp(version, &[1, 20, 5]).is_lt()
             && let Some(Ty::Union(members)) = self.types.get_mut("::java::data::advancement::predicate::ItemPredicate")
         {
             for member in members {
@@ -333,7 +334,7 @@ impl McDoc {
                 }
             }
         }
-        if cmp_version(version, &[26, 1]).is_lt()
+        if version::cmp(version, &[26, 1]).is_lt()
             && let Some(serializers) = self.dispatchers.get_mut("minecraft:recipe_serializer")
         {
             let category = Field::Pair {
@@ -696,15 +697,6 @@ struct Loader {
     version: Vec<u32>,
 }
 
-fn parse_version(v: &str) -> Vec<u32> {
-    v.split('.').map(|p| p.parse().unwrap_or(0)).collect()
-}
-
-/// Compares release versions part by part, a missing part counting as 0.
-fn cmp_version(a: &[u32], b: &[u32]) -> std::cmp::Ordering {
-    (0..a.len().max(b.len())).map(|i| a.get(i).unwrap_or(&0).cmp(b.get(i).unwrap_or(&0))).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
-}
-
 fn attributes(t: &Value) -> impl Iterator<Item = (&str, Option<&Value>)> {
     t.get("attributes").and_then(Value::as_array).into_iter().flatten().filter_map(|a| Some((a.get("name")?.as_str()?, a.get("value"))))
 }
@@ -724,8 +716,8 @@ fn literal_bool(v: Option<&Value>) -> Option<bool> {
 impl Loader {
     fn keep(&self, t: &Value) -> bool {
         attributes(t).all(|(name, value)| match (name, literal_string(value)) {
-            ("since", Some(v)) => cmp_version(&self.version, &parse_version(v)).is_ge(),
-            ("until", Some(v)) => cmp_version(&self.version, &parse_version(v)).is_lt(),
+            ("since", Some(v)) => version::cmp(&self.version, &version::parse(v)).is_ge(),
+            ("until", Some(v)) => version::cmp(&self.version, &version::parse(v)).is_lt(),
             _ => true,
         })
     }

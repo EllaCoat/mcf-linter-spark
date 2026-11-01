@@ -97,7 +97,7 @@ impl Project {
         let packs = discover_packs(root, options.max_depth);
         let mut entries = Vec::new();
         for pack in &packs {
-            collect_files(root, pack, &mut entries);
+            collect_files(root, pack, singular_dirs(data), &mut entries);
         }
         let ignore: Vec<impdoc::Visibility> = options
             .ignore
@@ -207,7 +207,7 @@ impl Project {
         let pack = self.packs.iter().find(|p| path.starts_with(p.join("data")))?;
         let rel_in_data = path.strip_prefix(pack.join("data")).ok().map(to_slash)?;
         let (ns, rest) = rel_in_data.split_once('/')?;
-        let (kind, id_path) = classify(rest)?;
+        let (kind, id_path) = classify(rest, singular_dirs(self.data))?;
         let id = format!("{ns}:{id_path}");
         let rel = path.strip_prefix(&self.root).map(to_slash).unwrap_or_else(|_| to_slash(path));
         let ignored = self.is_ignored(kind, &id);
@@ -831,29 +831,31 @@ pub fn discover_packs(root: &Path, max_depth: usize) -> Vec<PathBuf> {
     packs
 }
 
-/// The kind and the id-relative path of a file under `data/<ns>/`.
-fn classify(rel_in_ns: &str) -> Option<(Kind, &str)> {
-    const DIRS: &[(&str, Kind, &str)] = &[
-        ("functions/", kind::FUNCTION, ".mcfunction"),
-        ("tags/functions/", kind::FUNCTION_TAG, ".json"),
-        ("tags/blocks/", kind::BLOCK_TAG, ".json"),
-        ("tags/items/", kind::ITEM_TAG, ".json"),
-        ("tags/entity_types/", kind::ENTITY_TYPE_TAG, ".json"),
-        ("tags/fluids/", kind::FLUID_TAG, ".json"),
-        ("tags/game_events/", "tag/game_event", ".json"),
-        ("tags/damage_type/", kind::DAMAGE_TYPE_TAG, ".json"),
-        ("advancements/", kind::ADVANCEMENT, ".json"),
-        ("loot_tables/", kind::LOOT_TABLE, ".json"),
-        ("predicates/", kind::PREDICATE, ".json"),
-        ("recipes/", kind::RECIPE, ".json"),
-        ("item_modifiers/", kind::ITEM_MODIFIER, ".json"),
-        ("structures/", kind::STRUCTURE, ".nbt"),
-        ("dimension/", kind::DIMENSION, ".json"),
-        ("dimension_type/", kind::DIMENSION_TYPE, ".json"),
-        ("damage_type/", kind::DAMAGE_TYPE, ".json"),
+/// The kind and the id-relative path of a file under `data/<ns>/`. `singular` is the
+/// directory naming of 1.21 and later (`function/`, `tags/block/`).
+fn classify(rel_in_ns: &str, singular: bool) -> Option<(Kind, &str)> {
+    /// The directory before 1.21, the one since, the kind, and the file extension.
+    const DIRS: &[(&str, &str, Kind, &str)] = &[
+        ("functions/", "function/", kind::FUNCTION, ".mcfunction"),
+        ("tags/functions/", "tags/function/", kind::FUNCTION_TAG, ".json"),
+        ("tags/blocks/", "tags/block/", kind::BLOCK_TAG, ".json"),
+        ("tags/items/", "tags/item/", kind::ITEM_TAG, ".json"),
+        ("tags/entity_types/", "tags/entity_type/", kind::ENTITY_TYPE_TAG, ".json"),
+        ("tags/fluids/", "tags/fluid/", kind::FLUID_TAG, ".json"),
+        ("tags/game_events/", "tags/game_event/", "tag/game_event", ".json"),
+        ("tags/damage_type/", "tags/damage_type/", kind::DAMAGE_TYPE_TAG, ".json"),
+        ("advancements/", "advancement/", kind::ADVANCEMENT, ".json"),
+        ("loot_tables/", "loot_table/", kind::LOOT_TABLE, ".json"),
+        ("predicates/", "predicate/", kind::PREDICATE, ".json"),
+        ("recipes/", "recipe/", kind::RECIPE, ".json"),
+        ("item_modifiers/", "item_modifier/", kind::ITEM_MODIFIER, ".json"),
+        ("structures/", "structure/", kind::STRUCTURE, ".nbt"),
+        ("dimension/", "dimension/", kind::DIMENSION, ".json"),
+        ("dimension_type/", "dimension_type/", kind::DIMENSION_TYPE, ".json"),
+        ("damage_type/", "damage_type/", kind::DAMAGE_TYPE, ".json"),
     ];
-    for &(dir, k, ext) in DIRS {
-        if let Some(rest) = rel_in_ns.strip_prefix(dir) {
+    for &(plural, single, k, ext) in DIRS {
+        if let Some(rest) = rel_in_ns.strip_prefix(if singular { single } else { plural }) {
             return rest.strip_suffix(ext).map(|p| (k, p));
         }
     }
@@ -873,7 +875,12 @@ fn classify(rel_in_ns: &str) -> Option<(Kind, &str)> {
     None
 }
 
-fn collect_files(root: &Path, pack: &Path, out: &mut Vec<(PathBuf, String, Kind, String)>) {
+/// Whether the version names its data pack directories in the singular (1.21 and later).
+fn singular_dirs(data: &VersionData) -> bool {
+    data.at_least(&[1, 21])
+}
+
+fn collect_files(root: &Path, pack: &Path, singular: bool, out: &mut Vec<(PathBuf, String, Kind, String)>) {
     let data = pack.join("data");
     let Ok(namespaces) = std::fs::read_dir(&data) else { return };
     for ns in namespaces.flatten() {
@@ -893,7 +900,7 @@ fn collect_files(root: &Path, pack: &Path, out: &mut Vec<(PathBuf, String, Kind,
                     continue;
                 }
                 let Some(rel_in_ns) = p.strip_prefix(&ns_root).ok().map(to_slash) else { continue };
-                let Some((k, id_path)) = classify(&rel_in_ns) else { continue };
+                let Some((k, id_path)) = classify(&rel_in_ns, singular) else { continue };
                 let rel = p.strip_prefix(root).map(to_slash).unwrap_or_else(|_| to_slash(&p));
                 out.push((p.clone(), rel, k, format!("{ns_name}:{id_path}")));
             }
@@ -911,11 +918,16 @@ mod tests {
 
     #[test]
     fn classifies_paths() {
-        assert_eq!(classify("functions/a/b.mcfunction"), Some((kind::FUNCTION, "a/b")));
-        assert_eq!(classify("functions/a/.mcfunction"), Some((kind::FUNCTION, "a/")));
-        assert_eq!(classify("tags/functions/load.json"), Some((kind::FUNCTION_TAG, "load")));
-        assert_eq!(classify("worldgen/biome/x.json"), Some(("worldgen/biome", "x")));
-        assert_eq!(classify("functions/readme.txt"), None);
+        assert_eq!(classify("functions/a/b.mcfunction", false), Some((kind::FUNCTION, "a/b")));
+        assert_eq!(classify("functions/a/.mcfunction", false), Some((kind::FUNCTION, "a/")));
+        assert_eq!(classify("tags/functions/load.json", false), Some((kind::FUNCTION_TAG, "load")));
+        assert_eq!(classify("worldgen/biome/x.json", false), Some(("worldgen/biome", "x")));
+        assert_eq!(classify("functions/readme.txt", false), None);
+        assert_eq!(classify("function/a/b.mcfunction", false), None);
+        assert_eq!(classify("function/a/b.mcfunction", true), Some((kind::FUNCTION, "a/b")));
+        assert_eq!(classify("tags/block/x.json", true), Some((kind::BLOCK_TAG, "x")));
+        assert_eq!(classify("functions/a/b.mcfunction", true), None);
+        assert_eq!(classify("damage_type/x.json", true), Some((kind::DAMAGE_TYPE, "x")));
     }
 
     #[test]
@@ -971,6 +983,66 @@ mod tests {
         assert!(functions.contains(&"t:api".to_string()) && !functions.contains(&"t:internal".to_string()));
         assert_eq!(p.visible_ids(caller, kind::SCORE_HOLDER), vec!["$Secret".to_string()]);
         assert!(p.visible_ids(other, kind::SCORE_HOLDER).is_empty());
+    }
+
+    #[test]
+    fn a_1_21_pack_is_read_from_the_singular_directories() {
+        let root = std::env::temp_dir().join("ai-agent").join("mcf-linter-spark-tests").join("singular_dirs");
+        let _ = std::fs::remove_dir_all(&root);
+        let files = [
+            ("pack.mcmeta", "{}"),
+            ("data/t/function/main.mcfunction", "function t:lib\nfunction t:old\n"),
+            ("data/t/function/lib.mcfunction", "say lib\n"),
+            ("data/t/functions/old.mcfunction", "say old\n"),
+            ("data/t/tags/function/load.json", r#"{"values": ["t:main"]}"#),
+        ];
+        for (rel, text) in files {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let config = Config::from_settings(r#"{"datapack.env.cmdVersion": "1.21", "datapack.lint.strictFunctionCheck": ["error", true]}"#).unwrap();
+        let p = Project::load(&root, config, &Options { ignore: Vec::new(), max_depth: 0 }).unwrap();
+        let mut ids: Vec<_> = p.files.iter().map(|f| (f.kind, f.id.as_str())).collect();
+        ids.sort();
+        assert_eq!(ids, [(kind::FUNCTION, "t:lib"), (kind::FUNCTION, "t:main"), (kind::FUNCTION_TAG, "t:load")]);
+        let unresolved: Vec<_> = reported(&p, "data/t/function/main.mcfunction").into_iter().map(|d| d.1).collect();
+        assert_eq!(unresolved, ["t:old"]);
+    }
+
+    #[test]
+    fn every_release_checks_a_pack_laid_out_for_it() {
+        for (version, _) in crate::version::RELEASES {
+            let since = |v: &[u32]| crate::version::cmp(&crate::version::parse(version), v).is_ge();
+            let dir = |plural: &'static str| if since(&[1, 21]) { plural.strip_suffix('s').unwrap() } else { plural };
+            let predicate = if since(&[26, 3]) {
+                r#"{"type": "minecraft:random_chance", "chance": 0.5}"#
+            } else {
+                r#"{"condition": "minecraft:random_chance", "chance": 0.5}"#
+            };
+            let files = [
+                (format!("data/t/{}/main.mcfunction", dir("functions")), "function t:lib\nfunction #t:load\nloot give @s loot t:chest\nexecute if predicate t:p run say hi\n"),
+                (format!("data/t/{}/lib.mcfunction", dir("functions")), "say lib\n"),
+                (format!("data/t/tags/{}/load.json", dir("functions")), r#"{"values": ["t:lib"]}"#),
+                (format!("data/t/{}/chest.json", dir("loot_tables")), r#"{"pools": []}"#),
+                (format!("data/t/{}/p.json", dir("predicates")), predicate),
+                ("pack.mcmeta".to_string(), "{}"),
+            ];
+            let root = std::env::temp_dir().join("ai-agent").join("mcf-linter-spark-tests").join(format!("release-{version}"));
+            let _ = std::fs::remove_dir_all(&root);
+            for (rel, text) in &files {
+                let path = root.join(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, text).unwrap();
+            }
+            let settings = format!(
+                r#"{{"datapack.env.cmdVersion": "{version}", "datapack.lint.strictFunctionCheck": ["error", true], "datapack.lint.strictFunctionTagCheck": ["error", true], "datapack.lint.strictLootTableCheck": ["error", true], "datapack.lint.strictPredicateCheck": ["error", true]}}"#
+            );
+            let p = Project::load(&root, Config::from_settings(&settings).unwrap(), &Options { ignore: Vec::new(), max_depth: 0 }).unwrap();
+            assert_eq!(p.files.len(), 5, "{version}");
+            let diagnostics: Vec<_> = p.all_diagnostics().into_iter().flat_map(|(_, d)| d).map(|d| d.message).collect();
+            assert!(diagnostics.is_empty(), "{version}: {diagnostics:?}");
+        }
     }
 
     /// A pack written under the temp directory, with the IMP-Doc rules of the

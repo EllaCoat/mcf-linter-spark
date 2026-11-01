@@ -271,10 +271,12 @@ impl<'a> Walker<'a, '_> {
             Parser::TemplateMirror => self.values(args::TEMPLATE_MIRRORS, partial, pos),
             Parser::TemplateRotation => self.values(args::TEMPLATE_ROTATIONS, partial, pos),
             Parser::Color => self.values(args::basic::COLORS, partial, pos),
+            Parser::TeamColor => self.values(&args::basic::COLORS[..16], partial, pos),
+            Parser::SwingAnimation => self.values(args::basic::SWING_ANIMATIONS, partial, pos),
             Parser::Operation => self.values(&["=", "+=", "-=", "*=", "/=", "%=", "<", ">", "><"], partial, pos),
             Parser::ObjectiveCriteria => self.values(args::basic::SIMPLE_CRITERIA, partial, pos),
             Parser::ScoreboardSlot => self.values(&["list", "sidebar", "below_name"], partial, pos),
-            Parser::ItemSlot => self.values(ITEM_SLOTS, partial, pos),
+            Parser::ItemSlot | Parser::ItemSlots | Parser::SlotSource => self.values(ITEM_SLOTS, partial, pos),
             Parser::Swizzle => self.values(&["xyz", "xy", "xz", "yz", "x", "y", "z"], partial, pos),
             Parser::Entity { players_only, .. } => self.selector(partial, pos, *players_only),
             Parser::GameProfile => self.selector(partial, pos, true),
@@ -298,12 +300,19 @@ impl<'a> Walker<'a, '_> {
                 None => self.ids(&self.source.symbols(kind::FUNCTION), partial, pos, kind::FUNCTION),
             },
             Parser::Dimension => self.ids(&DIMENSIONS.iter().map(|d| d.to_string()).collect::<Vec<_>>(), partial, pos, kind::DIMENSION),
-            Parser::Resource { registry } | Parser::ResourceKey { registry } => self.resource(registry, partial, pos, false),
+            Parser::Resource { registry } | Parser::ResourceKey { registry } => match self.probe(parser, name, path, values) {
+                Some(k) => self.symbol(k, partial, pos),
+                None => self.resource(registry, partial, pos, false),
+            },
             Parser::ResourceOrTag { registry } | Parser::ResourceOrTagKey { registry } => {
                 self.resource(registry, partial, pos, true)
             }
             Parser::ResourceLocation if name == "sound" => self.registry("minecraft:sound_event", partial, pos),
-            Parser::ResourceLocation | Parser::Objective | Parser::Team | Parser::String(StringKind::Word) => {
+            Parser::ResourceLocation
+            | Parser::ResourceOrId { .. }
+            | Parser::Objective
+            | Parser::Team
+            | Parser::String(StringKind::Word) => {
                 if let Some(k) = self.probe(parser, name, path, values) {
                     self.symbol(k, partial, pos);
                 }
@@ -415,10 +424,7 @@ impl<'a> Walker<'a, '_> {
             }
             return;
         }
-        let mut ids: Vec<String> = self.data.registries.get(registry).map(|s| s.iter().cloned().collect()).unwrap_or_default();
-        if let Some(resources) = self.data.resources.get(short) {
-            ids.extend(resources.iter().cloned());
-        }
+        let ids: Vec<String> = self.data.registries.get(registry).map(|s| s.iter().cloned().collect()).unwrap_or_default();
         self.ids(&ids, partial, pos, short);
     }
 
@@ -467,7 +473,7 @@ impl<'a> Walker<'a, '_> {
         }
         if predicate && let Some(rest) = partial.strip_prefix('#') {
             let mut tags = self.source.symbols(kind::BLOCK_TAG);
-            tags.extend(self.data.tags.get("blocks").into_iter().flatten().cloned());
+            tags.extend(self.data.tags.get("block").into_iter().flatten().cloned());
             self.tag_ids(&tags, rest, pos + 1, kind::BLOCK_TAG);
             return;
         }
@@ -484,7 +490,7 @@ impl<'a> Walker<'a, '_> {
         }
         if predicate && let Some(rest) = partial.strip_prefix('#') {
             let mut tags = self.source.symbols(kind::ITEM_TAG);
-            tags.extend(self.data.tags.get("items").into_iter().flatten().cloned());
+            tags.extend(self.data.tags.get("item").into_iter().flatten().cloned());
             self.tag_ids(&tags, rest, pos + 1, kind::ITEM_TAG);
             return;
         }
@@ -537,7 +543,7 @@ impl<'a> Walker<'a, '_> {
             "type" => match value.strip_prefix('#') {
                 Some(rest) => {
                     let mut tags = self.source.symbols(kind::ENTITY_TYPE_TAG);
-                    tags.extend(self.data.tags.get("entity_types").into_iter().flatten().cloned());
+                    tags.extend(self.data.tags.get("entity_type").into_iter().flatten().cloned());
                     self.tag_ids(&tags, rest, value_pos + 1, kind::ENTITY_TYPE_TAG);
                 }
                 None => self.registry("minecraft:entity_type", value, value_pos),
@@ -847,6 +853,8 @@ mod tests {
                 kind::SCORE_HOLDER => vec!["$Difficulty".into()],
                 kind::STORAGE => vec!["example:temp".into(), "api:".into()],
                 kind::ENTITY_TAG => vec!["Enemy".into()],
+                kind::ADVANCEMENT => vec!["example:first_join".into()],
+                kind::DAMAGE_TYPE => vec!["example:magic".into()],
                 _ => Vec::new(),
             }
         }
@@ -877,6 +885,19 @@ mod tests {
 
     fn has(line: &str, label: &str, start: usize) -> bool {
         labels(line).contains(&(label.to_string(), start))
+    }
+
+    fn has_in(version: &str, line: &str, label: &str, start: usize) -> bool {
+        let data = crate::data::for_version(version).unwrap();
+        complete(line, data, &Config::default(), &Fake).into_iter().any(|c| c.label == label && c.start == start)
+    }
+
+    #[test]
+    fn data_pack_ids_of_resource_arguments_include_the_project() {
+        assert!(has("damage @s 1 example:", "example:magic", 12));
+        assert!(has_in("1.21.2", "advancement grant @s only example:", "example:first_join", 26));
+        assert!(has_in("1.21.2", "advancement grant @s only ", "minecraft:", 26));
+        assert!(has_in("26.3", "summon zomb", "zombie", 7));
     }
 
     #[test]

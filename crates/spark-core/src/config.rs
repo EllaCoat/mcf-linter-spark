@@ -9,7 +9,11 @@ use crate::diag::Severity;
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// The game version: `datapack.env.cmdVersion`, else the `env.gameVersion` of a
+    /// `spyglass.json` when it names a version with data, else 1.20.4.
     pub cmd_version: String,
+    /// Whether `cmd_version` came from `datapack.env.cmdVersion`.
+    cmd_version_set: bool,
     /// `public` unless `datapack.env.defaultVisibility` says otherwise.
     pub default_visibility: Value,
     /// Whether the project has a `spyglass.json`, the configuration of the
@@ -22,6 +26,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             cmd_version: "1.20.4".into(),
+            cmd_version_set: false,
             default_visibility: Value::String("public".into()),
             spyglass: false,
             lint: HashMap::new(),
@@ -56,6 +61,7 @@ impl Config {
         let mut config = Config::default();
         if let Some(v) = flat.get("datapack.env.cmdVersion").and_then(Value::as_str) {
             config.cmd_version = v.to_string();
+            config.cmd_version_set = true;
         }
         if let Some(v) = flat.get("datapack.env.defaultVisibility") {
             config.default_visibility = v.clone();
@@ -87,6 +93,13 @@ impl Config {
     pub fn merge_spyglass(&mut self, text: &str) -> Result<(), String> {
         let value: Value = serde_json::from_str(&strip_jsonc(text)).map_err(|e| e.to_string())?;
         self.spyglass = true;
+        // Spyglass also takes `Auto` and `Latest release`, which name no version here.
+        if let Some(v) = value.pointer("/env/gameVersion").and_then(Value::as_str)
+            && !self.cmd_version_set
+            && crate::version::release_index(v).is_some()
+        {
+            self.cmd_version = v.to_string();
+        }
         if let Some(lint) = value.get("lint").and_then(Value::as_object) {
             for (k, v) in lint {
                 if k.starts_with("impDoc") && !self.lint.contains_key(k) {
@@ -271,6 +284,19 @@ mod tests {
         assert!(c.spyglass_rule("impDocBareDeclaration").is_none());
         c.merge_spyglass(r#"{"lint": {"impDocVisibilityConflict": "warning"}}"#).unwrap();
         assert_eq!(c.spyglass_rule("impDocVisibilityConflict"), Some(Severity::Warning));
+    }
+
+    #[test]
+    fn the_game_version_of_a_spyglass_json_yields_to_cmd_version() {
+        let mut c = Config::from_settings("{}").unwrap();
+        c.merge_spyglass(r#"{"env": {"gameVersion": "1.21.5"}}"#).unwrap();
+        assert_eq!(c.cmd_version, "1.21.5");
+        let mut c = Config::from_settings(r#"{"datapack.env.cmdVersion": "1.20.4"}"#).unwrap();
+        c.merge_spyglass(r#"{"env": {"gameVersion": "26.3"}}"#).unwrap();
+        assert_eq!(c.cmd_version, "1.20.4");
+        let mut c = Config::from_settings("{}").unwrap();
+        c.merge_spyglass(r#"{"env": {"gameVersion": "Auto"}}"#).unwrap();
+        assert_eq!(c.cmd_version, "1.20.4");
     }
 
     #[test]
