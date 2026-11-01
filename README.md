@@ -60,7 +60,7 @@ VSCode の設定で、次の項目を指定できます。
 
 - `mcfLinterSpark.ignore`：診断を出さないファイルの ID のパターン（`animated_java:**` など）。一致したファイルも宣言は読みます。
 - `mcfLinterSpark.maxDepth`：データパックを探すディレクトリの深さ。指定しなければコマンドと同じです。
-- `mcfLinterSpark.serverPath`：同梱の実行ファイルの代わりに使う mcf-linter-spark の実行ファイル。
+- `mcfLinterSpark.serverPath`：同梱の実行ファイルの代わりに使う mcf-linter-spark の実行ファイル。開いたフォルダの設定で別の実行ファイルを起動されないよう、ユーザー設定でだけ指定でき、ワークスペースの `.vscode/settings.json` に書いた値は使いません。
 
 ## コマンドの使い方
 

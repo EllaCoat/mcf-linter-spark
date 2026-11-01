@@ -52,6 +52,7 @@
         "mcfLinterSpark.serverPath": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Path to an mcf-linter-spark executable to use instead of the bundled one."
         }
       }
