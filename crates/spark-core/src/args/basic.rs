@@ -2,7 +2,7 @@ use super::nbt::NbtValue;
 use super::nbt_check::{Category, Target};
 use super::{ArgCtx, entity, read_resource_location};
 use crate::data::VersionData;
-use crate::facts::kind;
+use crate::facts::{Kind, kind};
 use crate::reader::{PResult, Reader};
 
 pub const COLORS: &[&str] = &[
@@ -158,6 +158,33 @@ pub fn slot_source(r: &mut Reader, cx: &mut ArgCtx) -> PResult<()> {
     }
     r.pos = start;
     resource_or_id(r, cx, "slot_source")
+}
+
+/// What an unresolved id was likely meant to be, where the game reads an id in place of a slot or
+/// a number: an old slot name, a slot with `minecraft:`, or a number.
+pub fn misread_id(k: Kind, id: &str, data: &VersionData) -> Option<String> {
+    let path = id.strip_prefix("minecraft:")?;
+    match k {
+        "slot_source" => {
+            let slot = match path {
+                "horse.saddle" => "saddle".to_string(),
+                "horse.armor" => "armor.body".to_string(),
+                _ if indexed(path, "villager.", 8) => format!("mob.inventory.{}", &path["villager.".len()..]),
+                _ if is_slot(path, data) => return Some(format!("a slot with a namespace is read as an id. Write the slot as '{path}'")),
+                _ => return None,
+            };
+            Some(format!("'{path}' is no longer a slot, so it is read as an id. The slot is now '{slot}'"))
+        }
+        "context_int_provider" | "context_float_provider" => {
+            let number = path.strip_suffix(['b', 'B', 's', 'S', 'l', 'L', 'f', 'F', 'd', 'D']).unwrap_or(path);
+            if !(number.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'.')) && number.parse::<f64>().is_ok()) {
+                return None;
+            }
+            let suffix = if k == "context_float_provider" { "f" } else { "" };
+            Some(format!("a number here is read as an id. Write a constant as {{type:\"minecraft:constant\",value:{number}{suffix}}}"))
+        }
+        _ => None,
+    }
 }
 
 /// `ResourceOrIdArgument`: an id of the registry, or the element written inline in SNBT.
