@@ -660,6 +660,7 @@ impl StorageIndex {
 fn files_in(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
+    let mut seen: HashSet<PathBuf> = std::fs::canonicalize(dir).into_iter().collect();
     while let Some(d) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for e in entries.flatten() {
@@ -667,7 +668,7 @@ fn files_in(dir: &Path) -> Vec<PathBuf> {
             let name = e.file_name().to_string_lossy().into_owned();
             if !p.is_dir() {
                 out.push(p);
-            } else if !name.starts_with('.') && name != "node_modules" {
+            } else if !name.starts_with('.') && name != "node_modules" && std::fs::canonicalize(&p).map_or(true, |c| seen.insert(c)) {
                 pending.push(p);
             }
         }

@@ -40,13 +40,14 @@ impl Config {
     /// settings file gives the defaults; a missing `explicit` one is an error.
     pub fn load(root: &Path, explicit: Option<&Path>) -> Result<Config, String> {
         let settings = explicit.map_or_else(|| root.join(".vscode").join("settings.json"), Path::to_path_buf);
-        let mut config = match std::fs::read_to_string(&settings) {
+        let text = if explicit.is_some() { std::fs::read_to_string(&settings) } else { read_regular(&settings) };
+        let mut config = match text {
             Ok(text) => Config::from_settings(&text).map_err(|e| format!("{}: {e}", settings.display()))?,
             Err(_) if explicit.is_none() => Config::default(),
             Err(e) => return Err(format!("{}: {e}", settings.display())),
         };
         let spyglass = root.join("spyglass.json");
-        if let Ok(text) = std::fs::read_to_string(&spyglass) {
+        if let Ok(text) = read_regular(&spyglass) {
             config.merge_spyglass(&text).map_err(|e| format!("{}: {e}", spyglass.display()))?;
         }
         Ok(config)
@@ -160,6 +161,13 @@ impl Config {
     pub fn set_rule(&mut self, name: &str, value: Value) {
         self.lint.insert(name.to_string(), value);
     }
+}
+
+fn read_regular(path: &Path) -> std::io::Result<String> {
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    std::fs::read_to_string(path)
 }
 
 /// Flattens nested objects into dotted keys. A lint rule's value is kept whole,
