@@ -1350,7 +1350,13 @@ impl<'a> Checker<'a> {
     /// `None` outside it. Where the schema allows several types, a step that any of them takes is
     /// accepted.
     fn walk(&self, out: &mut Sink, steps: &[Step], types: Option<Vec<Typed<'a>>>) {
-        let Some((step, rest)) = steps.split_first() else { return };
+        let mut types = types;
+        for (i, step) in steps.iter().enumerate() {
+            types = self.step(out, step, &steps[i + 1..], types);
+        }
+    }
+
+    fn step(&self, out: &mut Sink, step: &Step, rest: &[Step], types: Option<Vec<Typed<'a>>>) -> Option<Vec<Typed<'a>>> {
         let resolved: Vec<Alt<'a>> = types.iter().flatten().flat_map(|(t, s)| self.r.resolve::<()>(t, s, &[], false, 0)).collect();
         let alts = schema(&resolved);
         let compound = alts.is_some_and(|a| a.iter().any(|x| matches!(x, Alt::Struct { .. })));
@@ -1371,7 +1377,7 @@ impl<'a> Checker<'a> {
                         next = Some(found).filter(|f| !f.is_empty());
                     }
                 }
-                self.walk(out, rest, next);
+                next
             }
             Step::Filter(node) => {
                 if alts.is_some() && !compound {
@@ -1379,7 +1385,7 @@ impl<'a> Checker<'a> {
                 }
                 let filter_types = if compound { types.as_deref().unwrap_or_default() } else { &[] };
                 self.check_filter(out, node, filter_types);
-                self.walk(out, rest, types);
+                types
             }
             Step::Index { start, end, filter } => {
                 let elements = alts.map(|a| self.alt_elements(a, None)).unwrap_or_default();
@@ -1400,7 +1406,7 @@ impl<'a> Checker<'a> {
                 if alts.is_some() && !is_list && rest.first().is_some_and(|next| next.start() > *end) {
                     sub(out, *end);
                 }
-                self.walk(out, rest, Some(elements).filter(|e| !e.is_empty()));
+                Some(elements).filter(|e| !e.is_empty())
             }
         }
     }

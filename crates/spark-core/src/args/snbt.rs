@@ -1,20 +1,20 @@
 //! SNBT of 1.21.5 and later (`SnbtGrammar`, `SnbtOperations`), read into the tree of `nbt.rs`.
 //! The error messages are the game's (`snbt.parser.*` in `en_us.json`).
 
-use super::nbt::{NbtEntry, NbtNode, NbtValue, is_java_whitespace};
+use super::nbt::{MAX_DEPTH, NbtEntry, NbtNode, NbtValue, TOO_DEEP, is_java_whitespace};
 use crate::reader::{PResult, Reader};
 
 /// `TagParser.parseAsArgument`: one value. Leading whitespace is skipped.
 pub fn parse_tag(r: &mut Reader) -> PResult<NbtNode> {
     skip_ws(r);
-    literal(r)
+    literal(r, 0)
 }
 
 /// `TagParser.parseCompoundAsArgument`: a value that must be a compound.
 pub fn parse_compound(r: &mut Reader) -> PResult<NbtNode> {
     skip_ws(r);
     let start = r.pos;
-    let node = literal(r)?;
+    let node = literal(r, 0)?;
     if matches!(node.value, NbtValue::Compound(_)) { Ok(node) } else { Err(r.error_span(start, "Expected compound tag")) }
 }
 
@@ -46,10 +46,11 @@ fn separator(r: &mut Reader) -> bool {
     }
 }
 
-fn literal(r: &mut Reader) -> PResult<NbtNode> {
+fn literal(r: &mut Reader, depth: usize) -> PResult<NbtNode> {
     let start = r.pos;
     match r.peek() {
         None => Err(r.error("Expected value")),
+        Some(b'{' | b'[') if depth >= MAX_DEPTH => Err(r.error(TOO_DEEP)),
         Some(b'+' | b'-' | b'.' | b'0'..=b'9') => {
             let token = r.read_while(is_unquoted);
             match number(token, IntType::Int) {
@@ -61,8 +62,8 @@ fn literal(r: &mut Reader) -> PResult<NbtNode> {
             let value = quoted(r, q)?;
             Ok(finish(r, start, NbtValue::String { value, quote: Some(q) }))
         }
-        Some(b'{') => compound(r),
-        Some(b'[') => list(r),
+        Some(b'{') => compound(r, depth),
+        Some(b'[') => list(r, depth),
         Some(_) => {
             let word = r.read_while(is_unquoted);
             if word.is_empty() {
@@ -71,7 +72,10 @@ fn literal(r: &mut Reader) -> PResult<NbtNode> {
             let before_args = r.pos;
             skip_ws(r);
             if r.peek() == Some(b'(') {
-                return operation(r, start, word);
+                if depth >= MAX_DEPTH {
+                    return Err(r.error(TOO_DEEP));
+                }
+                return operation(r, start, word, depth);
             }
             r.pos = before_args;
             let value = if word.eq_ignore_ascii_case("true") {
@@ -86,7 +90,7 @@ fn literal(r: &mut Reader) -> PResult<NbtNode> {
     }
 }
 
-fn compound(r: &mut Reader) -> PResult<NbtNode> {
+fn compound(r: &mut Reader, depth: usize) -> PResult<NbtNode> {
     let start = r.pos;
     r.pos += 1;
     skip_ws(r);
@@ -113,7 +117,7 @@ fn compound(r: &mut Reader) -> PResult<NbtNode> {
         skip_ws(r);
         r.expect(b':')?;
         skip_ws(r);
-        let value = literal(r)?;
+        let value = literal(r, depth + 1)?;
         entries.push(NbtEntry { key, key_quote, key_start: r.offset_of(key_pos), key_end, value });
         if !separator(r) {
             break;
@@ -124,7 +128,7 @@ fn compound(r: &mut Reader) -> PResult<NbtNode> {
     Ok(finish(r, start, NbtValue::Compound(entries)))
 }
 
-fn list(r: &mut Reader) -> PResult<NbtNode> {
+fn list(r: &mut Reader, depth: usize) -> PResult<NbtNode> {
     let start = r.pos;
     r.pos += 1;
     skip_ws(r);
@@ -139,7 +143,7 @@ fn list(r: &mut Reader) -> PResult<NbtNode> {
     }
     let mut items = Vec::new();
     while r.can_read() && r.peek() != Some(b']') {
-        items.push(literal(r)?);
+        items.push(literal(r, depth + 1)?);
         if !separator(r) {
             break;
         }
@@ -188,12 +192,12 @@ fn array_tag(r: &mut Reader, start: usize, kind: u8) -> PResult<NbtNode> {
 }
 
 /// `name(arguments)`: `bool` and `uuid`, each of one argument.
-fn operation(r: &mut Reader, start: usize, name: &str) -> PResult<NbtNode> {
+fn operation(r: &mut Reader, start: usize, name: &str, depth: usize) -> PResult<NbtNode> {
     r.pos += 1;
     skip_ws(r);
     let mut args = Vec::new();
     while r.can_read() && r.peek() != Some(b')') {
-        args.push(literal(r)?);
+        args.push(literal(r, depth + 1)?);
         if !separator(r) {
             break;
         }

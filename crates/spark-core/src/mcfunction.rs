@@ -232,7 +232,7 @@ fn parse_doc(lines: &[Line], i: usize, is_function_doc: bool) -> (DocComment, us
             if line.text.as_bytes().get(content_start) == Some(&b'@') {
                 let mut annos = Vec::new();
                 let indent = content_start - after_hash;
-                parse_annotation(lines, &mut j, content_start, indent, &mut annos);
+                parse_annotation(lines, &mut j, content_start, indent, &mut annos, 0);
                 for anno in annos {
                     flatten(&anno, &mut Vec::new(), &mut doc.annotations);
                 }
@@ -253,9 +253,11 @@ struct Anno {
     children: Vec<Anno>,
 }
 
+const MAX_ANNOTATION_DEPTH: usize = 64;
+
 /// DHP's `parseAnnotations`: a value, then either more values on the same line
 /// (children) or child lines indented by at least two more spaces.
-fn parse_annotation(lines: &[Line], li: &mut usize, pos: usize, indent: usize, out: &mut Vec<Anno>) {
+fn parse_annotation(lines: &[Line], li: &mut usize, pos: usize, indent: usize, out: &mut Vec<Anno>, depth: usize) {
     let line = &lines[*li];
     let end = line.text[pos..].find(' ').map_or(line.text.len(), |k| pos + k);
     let value = Token {
@@ -264,9 +266,13 @@ fn parse_annotation(lines: &[Line], li: &mut usize, pos: usize, indent: usize, o
         end: (line.start + end) as u32,
     };
     let mut anno = Anno { value, children: Vec::new() };
+    if depth >= MAX_ANNOTATION_DEPTH {
+        out.push(anno);
+        return;
+    }
     if line.text.as_bytes().get(end) == Some(&b' ') {
         let next = end + (line.text[end..].len() - line.text[end..].trim_start_matches([' ', '\t']).len());
-        parse_annotation(lines, li, next, indent, &mut anno.children);
+        parse_annotation(lines, li, next, indent, &mut anno.children, depth + 1);
     } else {
         while *li + 1 < lines.len() {
             let next_line = &lines[*li + 1];
@@ -283,7 +289,7 @@ fn parse_annotation(lines: &[Line], li: &mut usize, pos: usize, indent: usize, o
                 break;
             }
             *li += 1;
-            parse_annotation(lines, li, indent_end, indent_end - indent_start, &mut anno.children);
+            parse_annotation(lines, li, indent_end, indent_end - indent_start, &mut anno.children, depth + 1);
         }
     }
     out.push(anno);
@@ -521,6 +527,12 @@ mod tests {
         let doc = f.function_doc.expect("function doc");
         assert_eq!(doc.visibility.len(), 1);
         assert_eq!(&*doc.visibility[0].kind, "function");
+    }
+
+    #[test]
+    fn annotations_deeper_than_the_limit_are_read_up_to_it() {
+        let f = run(&format!("#> a:b/c\n# @within {}\nsay hi\n", "function ".repeat(10_000)));
+        assert!(f.function_doc.is_some());
     }
 
     #[test]

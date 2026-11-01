@@ -232,6 +232,7 @@ dependencies = [
  "crossbeam-channel",
  "lsp-server",
  "lsp-types",
+ "rayon",
  "serde",
  "serde_json",
  "spark-core",

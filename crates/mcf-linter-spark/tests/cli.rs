@@ -11,6 +11,25 @@ fn write_pack(root: &Path, files: &[(&str, &str)]) {
 }
 
 #[test]
+fn the_deepest_nesting_the_parsers_allow_is_checked_without_overflowing_the_stack() {
+    let root = std::env::temp_dir().join("ai-agent").join("mcf-linter-spark-tests").join("cli-deepest-nesting");
+    let chain = format!("execute {}run ", "as @s ".repeat(4090));
+    let passengers = format!("{}{{}}{}", "{Passengers:[".repeat(255), "]}".repeat(255));
+    let text = (0..255).fold(r#""a""#.to_string(), |inner, _| format!("{{text:\"a\",extra:[{inner}]}}"));
+    let function = format!("{chain}summon minecraft:pig ~ ~ ~ {passengers}\n{chain}tellraw @a {text}\n");
+    write_pack(
+        &root,
+        &[
+            ("pack.mcmeta", r#"{"pack": {"pack_format": 48, "description": ""}}"#),
+            (".vscode/settings.json", r#"{"datapack.env.cmdVersion": "26.3"}"#),
+            ("data/t/function/f.mcfunction", &function),
+        ],
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_mcf-linter-spark")).arg("check").arg(&root).output().unwrap();
+    assert!(matches!(output.status.code(), Some(0 | 1)), "{:?}: {}", output.status, String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
 fn control_characters_from_the_files_do_not_start_lines_of_the_output() {
     let root = std::env::temp_dir().join("ai-agent").join("mcf-linter-spark-tests").join("cli-control-characters");
     let advancement = r#"{"criteria": {"a": {"trigger": "minecraft:tick"}}, "rewards": {"function": "t:a\n::error file=x::injected\u001b[2J"}}"#;

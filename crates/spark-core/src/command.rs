@@ -26,11 +26,13 @@ pub struct CommandResult {
     pub effects: Vec<Effect>,
 }
 
+pub const MAX_NODES: usize = 8192;
+
 pub fn parse_command(line: &str, base: u32, data: &VersionData, config: &Config) -> CommandResult {
     let w = Walker { data, config, src: line, base };
     let mut path = Vec::new();
     let mut values = Vec::new();
-    match w.children(ROOT, 0, &mut path, &mut values) {
+    match w.children(ROOT, 0, &mut path, &mut values, 0) {
         Ok(effects) => CommandResult { error: None, effects },
         Err((error, effects)) => CommandResult { error: Some(error), effects },
     }
@@ -52,13 +54,16 @@ impl<'a> Walker<'a> {
     }
 
     /// Parses the children of `node` starting at byte `pos` of the line.
-    fn children(&self, node: NodeId, pos: usize, path: &mut Vec<PathNode<'a>>, values: &mut Vec<ArgValue>) -> Outcome {
+    fn children(&self, node: NodeId, pos: usize, path: &mut Vec<PathNode<'a>>, values: &mut Vec<ArgValue>, depth: usize) -> Outcome {
+        if depth >= MAX_NODES {
+            return Err((self.err_at(pos, &format!("Too many arguments in one command (more than {MAX_NODES})")), Vec::new()));
+        }
         let tree = &self.data.tree;
         let n = tree.node(node);
         let word_end = self.src[pos..].find(' ').map_or(self.src.len(), |i| pos + i);
         let word = &self.src[pos..word_end];
         if let Some(&lit) = n.literals.iter().find(|&&c| tree.node(c).name() == word) {
-            return self.after_node(lit, word_end, Vec::new(), path, values);
+            return self.after_node(lit, word_end, Vec::new(), path, values, depth);
         }
         if n.arguments.is_empty() {
             let message = if node == ROOT { "Unknown command" } else { "Incorrect argument for command" };
@@ -72,7 +77,7 @@ impl<'a> Walker<'a> {
             let saved = values.len();
             let mut cx = ArgCtx { data: self.data, config: self.config, effects: &mut effects, name, path, values };
             let outcome = match args::parse(parser, &mut reader, &mut cx) {
-                Ok(()) => self.after_node(arg, reader.pos, effects, path, values),
+                Ok(()) => self.after_node(arg, reader.pos, effects, path, values, depth),
                 Err(e) => Err((e, effects)),
             };
             if outcome.is_err() {
@@ -91,7 +96,15 @@ impl<'a> Walker<'a> {
     }
 
     /// Continues after `node` has consumed the line up to `end`.
-    fn after_node(&self, node: NodeId, end: usize, mut effects: Vec<Effect>, path: &mut Vec<PathNode<'a>>, values: &mut Vec<ArgValue>) -> Outcome {
+    fn after_node(
+        &self,
+        node: NodeId,
+        end: usize,
+        mut effects: Vec<Effect>,
+        path: &mut Vec<PathNode<'a>>,
+        values: &mut Vec<ArgValue>,
+        depth: usize,
+    ) -> Outcome {
         let tree: &'a crate::tree::CommandTree = &self.data.tree;
         let n = tree.node(node);
         if end >= self.src.len() {
@@ -113,13 +126,13 @@ impl<'a> Walker<'a> {
         let result = if n.redirect == Some(ROOT) {
             let outer = std::mem::take(path);
             let outer_values = std::mem::take(values);
-            let result = self.children(next, end + 1, path, values);
+            let result = self.children(next, end + 1, path, values, depth + 1);
             *path = outer;
             *values = outer_values;
             result
         } else {
             path.push(PathNode { name: n.name(), literal: matches!(n.kind, NodeKind::Literal(_)) });
-            let result = self.children(next, end + 1, path, values);
+            let result = self.children(next, end + 1, path, values, depth + 1);
             path.pop();
             result
         };
@@ -230,6 +243,30 @@ pub(crate) mod tests {
             assert_eq!(diagnostics_in(v, "tellraw @a {text:\"a\",color:1}"), ["Expected a string tag but got an int tag"], "{v}");
             assert_eq!(diagnostics_in(v, "tellraw @a {text:\"a\",clickEvent:{}}"), ["Unknown key “clickEvent”"], "{v}");
         }
+    }
+
+    #[test]
+    fn nbt_deeper_than_the_game_writes_and_chains_past_the_node_limit_are_errors() {
+        let compounds = |n: usize| format!("data modify storage a:b x set value {}1{}", "{a:".repeat(n), "}".repeat(n));
+        let lists = |n: usize| format!("data modify storage a:b x set value {}1{}", "[".repeat(n), "]".repeat(n));
+        for v in ["1.20.4", "26.3"] {
+            assert_eq!(error_in(v, &compounds(512)), None, "{v}");
+            assert_eq!(error_in(v, &lists(512)), None, "{v}");
+            assert_eq!(error_in(v, &compounds(513)).as_deref(), Some("Resulting NBT too deeply nested"), "{v}");
+            assert_eq!(error_in(v, &lists(513)).as_deref(), Some("Resulting NBT too deeply nested"), "{v}");
+        }
+        let chains = std::thread::Builder::new().stack_size(64 << 20).spawn(|| {
+            let chain = |n: usize| format!("execute {}run say a", "as @s ".repeat(n));
+            (error_in("26.3", &chain(4000)), error_in("26.3", &chain(4100)))
+        });
+        let (within, past) = chains.unwrap().join().unwrap();
+        assert_eq!(within, None);
+        assert_eq!(past.as_deref(), Some("Too many arguments in one command (more than 8192)"));
+    }
+
+    #[test]
+    fn long_nbt_paths_are_checked() {
+        assert_eq!(error_in("1.20.4", &format!("data get storage a:b {}a", "a.".repeat(30_000))), None);
     }
 
     #[test]

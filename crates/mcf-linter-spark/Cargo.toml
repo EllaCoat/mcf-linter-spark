@@ -10,5 +10,6 @@ crossbeam-channel = "0.5"
 spark-core.workspace = true
 lsp-server = "0.7"
 lsp-types = "0.95"
+rayon.workspace = true
 serde = "1"
 serde_json.workspace = true

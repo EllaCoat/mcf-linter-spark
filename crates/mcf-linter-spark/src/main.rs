@@ -75,7 +75,24 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
+const STACK_SIZE: usize = 64 << 20;
+
 fn main() -> ExitCode {
+    let pool = rayon::ThreadPoolBuilder::new().stack_size(STACK_SIZE).build_global();
+    if let Err(e) = pool {
+        eprintln!("mcf-linter-spark: {e}");
+        return ExitCode::from(2);
+    }
+    match std::thread::Builder::new().stack_size(STACK_SIZE).spawn(start) {
+        Ok(thread) => thread.join().unwrap_or(ExitCode::from(2)),
+        Err(e) => {
+            eprintln!("mcf-linter-spark: {e}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn start() -> ExitCode {
     if std::env::args().nth(1).as_deref() == Some("lsp") {
         return match lsp::run() {
             Ok(()) => ExitCode::SUCCESS,
