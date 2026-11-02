@@ -1,5 +1,9 @@
 packages:
   - .
+  - editors/vscode
 
+allowBuilds:
+  '@vscode/vsce-sign': false
+  esbuild: true
 minimumReleaseAge: 10080
 minimumReleaseAgeStrict: true

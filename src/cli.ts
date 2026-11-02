@@ -232,7 +232,11 @@ function escapeProperty(s: string): string {
 
 if (isMainThread) {
   if (process.argv[1] !== undefined && import.meta.filename === process.argv[1]) {
-    const worker = new Worker(new URL(import.meta.url), { argv: process.argv.slice(2), resourceLimits: { stackSizeMb: STACK_SIZE_MB } });
+    const argv = process.argv.slice(2);
+    const lsp = argv[0] === "lsp";
+    // The server reads its stdin in the worker, so this thread hands the input over.
+    const worker = new Worker(new URL(import.meta.url), { argv, stdin: lsp, resourceLimits: { stackSizeMb: STACK_SIZE_MB } });
+    if (lsp) process.stdin.pipe(worker.stdin!);
     worker.on("message", (code: number) => {
       process.exitCode = code;
     });
@@ -240,7 +244,15 @@ if (isMainThread) {
       process.stderr.write(`mcf-linter-spark: ${e.stack ?? e.message}\n`);
       process.exitCode = 2;
     });
+    worker.on("exit", (code) => {
+      if (!lsp) return;
+      process.exitCode ??= code;
+      process.stdin.unpipe(worker.stdin!);
+      process.stdin.destroy();
+    });
   }
+} else if (process.argv[2] === "lsp") {
+  (await import("./lsp/server.ts")).run();
 } else {
   parentPort!.postMessage(await start(process.argv.slice(2)));
 }

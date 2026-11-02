@@ -1,0 +1,72 @@
+{
+  "name": "mcf-linter-spark",
+  "displayName": "mcf-linter-spark",
+  "description": "Fast mcfunction linter with IMP-Doc support for Minecraft Java Edition 1.20.3 to 26.3 data packs",
+  "version": "1.0.0",
+  "publisher": "ellacoat",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Linters"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:mcfunction",
+    "workspaceContains:**/pack.mcmeta"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "mcfunction",
+        "extensions": [
+          ".mcfunction"
+        ],
+        "aliases": [
+          "mcfunction"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "mcf-linter-spark",
+      "properties": {
+        "mcfLinterSpark.ignore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Resource id patterns (for example \"animated_java:**\") whose files are analysed but get no diagnostics."
+        },
+        "mcfLinterSpark.maxDepth": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "description": "How many directory levels below the workspace folder are searched for data packs. Unset: 2, or any depth when the folder has a spyglass.json."
+        },
+        "mcfLinterSpark.serverPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Path to a JavaScript file of the language server (the file that 'node <file> lsp' runs) to use instead of the bundled one."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "bundle": "node scripts/bundle.mts",
+    "package": "pnpm run typecheck && pnpm run bundle && vsce package --no-dependencies --allow-missing-repository",
+    "test": "node test/run.mts"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.91.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
+    "vscode-languageclient": "^11.0.0"
+  }
+}
