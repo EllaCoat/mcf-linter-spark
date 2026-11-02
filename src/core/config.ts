@@ -13,7 +13,7 @@ export class Config {
    * `spyglass.json` when it names a version with data, else 1.20.4. */
   cmdVersion = "1.20.4";
   /** Whether a setting named `cmdVersion` (else it is the default). */
-  private versionSet_ = false;
+  #versionSet = false;
   /** `public` unless `datapack.env.defaultVisibility` says otherwise. */
   defaultVisibility: JsonValue = "public";
   /** Whether the project has a `spyglass.json`, the configuration of the
@@ -68,7 +68,7 @@ export class Config {
     const version = asStr(flat.get("datapack.env.cmdVersion"));
     if (version !== undefined) {
       config.cmdVersion = version;
-      config.versionSet_ = true;
+      config.#versionSet = true;
     }
     const visibility = flat.get("datapack.env.defaultVisibility");
     if (visibility !== undefined) config.defaultVisibility = visibility;
@@ -79,7 +79,7 @@ export class Config {
   }
 
   versionSet(): boolean {
-    return this.versionSet_;
+    return this.#versionSet;
   }
 
   /** A diagnostic rule written as `[severity, value]`. Returns `undefined` when the
@@ -101,9 +101,9 @@ export class Config {
     this.spyglass = true;
     // Spyglass also takes `Auto` and `Latest release`, which name no version here.
     const v = asStr(pointer(value, "/env/gameVersion"));
-    if (v !== undefined && !this.versionSet_ && releaseIndex(v) !== undefined) {
+    if (v !== undefined && !this.#versionSet && releaseIndex(v) !== undefined) {
       this.cmdVersion = v;
-      this.versionSet_ = true;
+      this.#versionSet = true;
     }
     const lint = asObject(get(value, "lint"));
     if (lint !== undefined) {
@@ -157,11 +157,10 @@ export class Config {
     this.lint.set(name, value);
   }
 
-  /** A copy (Rust's `Config` is `Clone`). */
   clone(): Config {
     const c = new Config();
     c.cmdVersion = this.cmdVersion;
-    c.versionSet_ = this.versionSet_;
+    c.#versionSet = this.#versionSet;
     c.defaultVisibility = this.defaultVisibility;
     c.spyglass = this.spyglass;
     for (const [k, v] of this.lint) c.lint.set(k, v);

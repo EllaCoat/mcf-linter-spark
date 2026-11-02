@@ -29,7 +29,7 @@ export const MAX_DEPTH = 256;
 
 const MALFORMED = "Malformed JSON (strings need double quotes; comments and single quotes are not allowed)";
 
-const BOM = "﻿";
+const BOM = "\uFEFF";
 
 /** What ends a bare word (`unquoted`). */
 const UNQUOTED_STOP = "/\\;#={}[]:, \t\f\r\n";
@@ -368,7 +368,7 @@ function parseEscape(r: Reader): PResult<string> {
   return decoded;
 }
 
-/** After `\u`. A lone surrogate becomes U+FFFD, as in the Rust version (Rust strings cannot hold one). */
+/** After `\u`. A lone surrogate becomes U+FFFD. */
 function parseUnicodeEscape(r: Reader): PResult<string> {
   const high = parseHex4(r);
   if (high instanceof ParseError) return high;
@@ -386,7 +386,7 @@ function parseUnicodeEscape(r: Reader): PResult<string> {
 
 function parseHex4(r: Reader): PResult<number> {
   const digits = r.src.slice(r.pos, r.pos + 4);
-  // The Rust version needs 4 bytes here, so fewer than 4 units still count when they are wide enough.
+  // Fewer than 4 units that take 4 or more UTF-8 bytes are an invalid escape, not an unterminated one.
   if (digits.length < 4 && utf8Len(digits) < 4) return r.error("Unterminated escape sequence");
   if (digits.length < 4) return r.error("Invalid unicode escape");
   for (let i = 0; i < 4; i++) {

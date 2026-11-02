@@ -29,7 +29,7 @@ export class Reader {
     this.base = base;
   }
 
-  /** A copy at the same position (Rust's `Reader` is `Copy`). */
+  /** A copy at the same position. */
   clone(): Reader {
     return new Reader(this.src, this.base, this.pos);
   }
@@ -209,8 +209,8 @@ export class Reader {
   }
 }
 
-/** Java's Double.parseDouble accepts forms such as ".5" and "1." that Rust also
- * accepts; "-" alone and repeated signs are rejected by both. */
+/** A double as Java's Double.parseDouble reads it: ".5" and "1." are numbers, "-" alone and
+ * repeated signs are not. */
 export function parseJavaDouble(text: string): number | undefined {
   if (text === "-" || text === "." || text === "-.") return undefined;
   return parseF64(text);

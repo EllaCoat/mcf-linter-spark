@@ -1,18 +1,18 @@
 // Positions and string indexes are UTF-16 code units, as JS strings count them. The helpers here
-// give the results that Rust's `str` and `char` methods gave, where JS counts differently.
+// count and compare by code point, or by UTF-8 byte, where the checks need that instead.
 
 const WHITESPACE = new Set([
   0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007,
   0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
 ]);
 
-/** Rust's `char::is_whitespace` (Unicode White_Space). */
+/** Unicode White_Space. Unlike `\s`, U+0085 counts and U+FEFF does not. */
 export function isWhitespace(c: string): boolean {
   const cp = c.codePointAt(0);
   return cp !== undefined && WHITESPACE.has(cp);
 }
 
-/** Rust's `u8::is_ascii_whitespace`: space, tab, LF, form feed, CR (not vertical tab). */
+/** Space, tab, LF, form feed, or CR (not vertical tab). */
 export function isAsciiWhitespace(c: string): boolean {
   return c === " " || c === "\t" || c === "\n" || c === "\f" || c === "\r";
 }
@@ -37,17 +37,13 @@ export function isAsciiLowercase(c: string): boolean {
   return c.length === 1 && c >= "a" && c <= "z";
 }
 
-export function isAsciiUppercase(c: string): boolean {
-  return c.length === 1 && c >= "A" && c <= "Z";
-}
-
 /** Whether every character is ASCII. */
 export function isAscii(s: string): boolean {
   for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) > 0x7f) return false;
   return true;
 }
 
-/** Rust's `str::len`: the length in UTF-8 bytes. */
+/** The length in UTF-8 bytes. */
 export function utf8Len(s: string): number {
   let n = 0;
   for (let i = 0; i < s.length; i++) {
@@ -62,7 +58,7 @@ export function utf8Len(s: string): number {
   return n;
 }
 
-/** Rust's `str::chars().count()`: the number of code points. */
+/** The number of code points. */
 export function charCount(s: string): number {
   let n = 0;
   for (let i = 0; i < s.length; i++) {
@@ -72,7 +68,7 @@ export function charCount(s: string): number {
   return n;
 }
 
-/** The code point at `pos` as a string (two units for a surrogate pair), like `str[pos..].chars().next()`. */
+/** The code point at `pos` as a string (two units for a surrogate pair). */
 export function charAt(s: string, pos: number): string | undefined {
   if (pos >= s.length) return undefined;
   const u = s.charCodeAt(pos);
@@ -80,22 +76,14 @@ export function charAt(s: string, pos: number): string | undefined {
   return s[pos];
 }
 
-/** The last code point of `s`, like `str.chars().next_back()`. */
-export function lastChar(s: string): string | undefined {
-  if (s.length === 0) return undefined;
-  const u = s.charCodeAt(s.length - 1);
-  if (isLowSurrogate(u) && s.length >= 2 && isHighSurrogate(s.charCodeAt(s.length - 2))) return s.slice(-2);
-  return s[s.length - 1];
-}
-
-/** Rust's `str::floor_char_boundary`: an index inside a surrogate pair moves to its start. */
+/** `index`, moved back to the start of the surrogate pair it falls inside. */
 export function floorCharBoundary(s: string, index: number): number {
   if (index >= s.length) return s.length;
   if (index > 0 && isLowSurrogate(s.charCodeAt(index)) && isHighSurrogate(s.charCodeAt(index - 1))) return index - 1;
   return index;
 }
 
-/** Orders strings as Rust's `str` does: by code point. */
+/** Orders strings by code point. `<` orders by UTF-16 unit, which puts U+E000..U+FFFF after the code points above U+FFFF. */
 export function compareStr(a: string, b: string): number {
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i++) {
@@ -120,7 +108,7 @@ function isLowSurrogate(u: number): boolean {
   return u >= 0xdc00 && u <= 0xdfff;
 }
 
-/** Rust's `{:?}` of a `str`. Control characters are escaped as `\u{..}`. */
+/** `s` in double quotes for a message: `"` and `\` escaped, and control characters other than `\n`, `\r`, `\t`, `\0` as `\u{..}`. */
 export function debugStr(s: string): string {
   let out = '"';
   for (const c of s) {

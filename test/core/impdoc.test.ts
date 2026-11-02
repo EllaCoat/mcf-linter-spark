@@ -31,7 +31,7 @@ test("private_and_internal", () => {
   assert.ok(!i.some((v) => entryMatches(v, "function", "b:zz")));
 });
 
-// This test has no Rust counterpart: `trim_end` strips Unicode White_Space, which JS's `trimEnd` does not match.
+// JS's `trimEnd` strips U+FEFF and keeps U+0085; the display trims Unicode White_Space instead.
 test("display_trims_unicode_white_space", () => {
   assert.equal(new DocComment("text\u0085\u00a0\u2028 \n").display(), "text");
   assert.equal(new DocComment("text\ufeff").display(), "text\ufeff");

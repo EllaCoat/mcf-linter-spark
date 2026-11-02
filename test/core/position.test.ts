@@ -3,8 +3,6 @@ import { test } from "node:test";
 
 import { LineIndex } from "../../src/core/position.ts";
 
-// Offsets count UTF-16 code units here, where the Rust tests counted UTF-8 bytes.
-
 test("counts_utf16_columns", () => {
   const text = "ab\nあいz\n";
   const idx = new LineIndex(text);

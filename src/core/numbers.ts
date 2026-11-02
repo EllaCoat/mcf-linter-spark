@@ -1,5 +1,6 @@
-// Number parsing, casting, and formatting with the results of Rust's `str::parse`, `as`, and
-// `Display`, which the diagnostics' messages and ranges depend on.
+// Number parsing, casting, and formatting. The diagnostics' messages and ranges depend on these
+// exact rules: integers may start with `+`, casts from floats truncate and saturate, and floats
+// print their shortest digits without an exponent.
 
 export const I32_MIN = -2147483648;
 export const I32_MAX = 2147483647;
@@ -20,24 +21,24 @@ function parseInteger(text: string, min: bigint, max: bigint, pattern: RegExp): 
   return v < min || v > max ? undefined : v;
 }
 
-/** `text.parse::<i32>()`. */
+/** A decimal integer in the i32 range, with an optional sign. */
 export function parseI32(text: string): number | undefined {
   const v = parseInteger(text, BigInt(I32_MIN), BigInt(I32_MAX), INTEGER);
   return v === undefined ? undefined : Number(v);
 }
 
-/** `text.parse::<u32>()`. */
+/** A decimal integer in the u32 range, with an optional `+`. */
 export function parseU32(text: string): number | undefined {
   const v = parseInteger(text, 0n, BigInt(U32_MAX), UNSIGNED);
   return v === undefined ? undefined : Number(v);
 }
 
-/** `text.parse::<i64>()`. */
+/** A decimal integer in the i64 range, with an optional sign. */
 export function parseI64(text: string): bigint | undefined {
   return parseInteger(text, I64_MIN, I64_MAX, INTEGER);
 }
 
-/** `text.parse::<f64>()`. */
+/** A decimal float (`1`, `1.`, `.5`, `1e3`, with an optional sign), or `inf`, `infinity`, `nan` in any case. */
 export function parseF64(text: string): number | undefined {
   if (FLOAT.test(text)) return Number(text);
   const special = SPECIAL_FLOAT.exec(text);
@@ -46,7 +47,7 @@ export function parseF64(text: string): number | undefined {
   return special[1] === "-" ? -Infinity : Infinity;
 }
 
-/** `x as i32` for an `f64`: truncates toward zero, saturates at the ends, and NaN is 0. */
+/** Truncates toward zero, saturating at the ends of the i32 range; NaN is 0. */
 export function f64ToI32(x: number): number {
   if (Number.isNaN(x)) return 0;
   if (x >= I32_MAX) return I32_MAX;
@@ -54,7 +55,7 @@ export function f64ToI32(x: number): number {
   return Math.trunc(x);
 }
 
-/** `x as i64` for an `f64`. */
+/** Truncates toward zero, saturating at the ends of the i64 range; NaN is 0. */
 export function f64ToI64(x: number): bigint {
   if (Number.isNaN(x)) return 0n;
   if (x >= 9223372036854775807) return I64_MAX;
@@ -81,14 +82,14 @@ function special(x: number): string | undefined {
   return undefined;
 }
 
-/** `format!("{}", x)` of an `f64`: the shortest digits that read back as `x`, never in exponent form. */
+/** The shortest digits that read back as `x`, never in exponent form (`inf`, `-inf`, `NaN`, `-0` for the special values). */
 export function fmtF64(x: number): string {
   const s = special(x);
   if (s !== undefined) return s;
   return (x < 0 ? "-" : "") + plain(String(Math.abs(x)));
 }
 
-/** `format!("{}", x)` of an `f32` (`x` holds the `f32` value). */
+/** `fmtF64` for an f32 value: the shortest digits that read back as the same f32. */
 export function fmtF32(x: number): string {
   const s = special(x);
   if (s !== undefined) return s;

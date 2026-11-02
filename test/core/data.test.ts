@@ -14,7 +14,7 @@ function summaries(registries: string, blocks: string): VersionData {
   return fromSummaries("1.20.4", commands, registryLists(JSON.parse(registries))!, blockSummary(JSON.parse(blocks))!, mcdoc);
 }
 
-// Not in the Rust tests: `for_version` loaded the data itself. This one runs before any load.
+// Runs before any `loadVersionData`, so no version is loaded yet.
 test("for_version_needs_the_data_loaded", () => {
   assert.throws(() => forVersion("26.3"), /not loaded/);
   assert.throws(() => forVersion("1.20.2"), /unsupported game version '1\.20\.2' \(supported: 1\.20\.3, 1\.20\.4, /);

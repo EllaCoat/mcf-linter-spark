@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { utf8Len, charCount, compareStr, debugStr, isWhitespace } from "../../src/core/chars.ts";
 import { f64ToI32, f64ToI64, fmtF32, fmtF64, parseF64, parseI32, parseI64 } from "../../src/core/numbers.ts";
 
-test("integers parse like Rust's str::parse", () => {
+test("integers parse in decimal with an optional sign, within their range", () => {
   assert.equal(parseI32("+5"), 5);
   assert.equal(parseI32("007"), 7);
   assert.equal(parseI32("2147483648"), undefined);
@@ -15,7 +15,7 @@ test("integers parse like Rust's str::parse", () => {
   assert.equal(parseI64("9223372036854775808"), undefined);
 });
 
-test("floats parse like Rust's str::parse", () => {
+test("floats parse with or without digits around the point", () => {
   assert.equal(parseF64("1."), 1);
   assert.equal(parseF64(".5"), 0.5);
   assert.equal(parseF64("-.5"), -0.5);
@@ -26,7 +26,7 @@ test("floats parse like Rust's str::parse", () => {
   assert.equal(parseF64(" 1"), undefined);
 });
 
-test("casts saturate like Rust's as", () => {
+test("casts from floats truncate and saturate", () => {
   assert.equal(f64ToI32(1e10), 2147483647);
   assert.equal(f64ToI32(-1.9), -1);
   assert.equal(f64ToI32(NaN), 0);
@@ -34,7 +34,7 @@ test("casts saturate like Rust's as", () => {
   assert.equal(f64ToI64(-1e30), -9223372036854775808n);
 });
 
-test("floats format like Rust's Display", () => {
+test("floats format with their shortest digits and no exponent", () => {
   assert.equal(fmtF64(1), "1");
   assert.equal(fmtF64(0.1), "0.1");
   assert.equal(fmtF64(1e21), "1000000000000000000000");
@@ -46,7 +46,7 @@ test("floats format like Rust's Display", () => {
   assert.equal(fmtF32(Math.fround(-1.5)), "-1.5");
 });
 
-test("strings measure like Rust's str", () => {
+test("strings measure and compare by UTF-8 byte and code point", () => {
   assert.equal(utf8Len("aあ🙂"), 1 + 3 + 4);
   assert.equal(charCount("aあ🙂"), 3);
   assert.ok(compareStr("￿", "🙂") < 0);

@@ -154,7 +154,7 @@ const STRUCTURE_TAGS_1_21 = [
   "shipwreck", "village",
 ];
 
-/** The kinds whose directory took a singular name in 1.21 (`project::RENAMED_DIRS`). */
+/** The kinds whose directory took a singular name in 1.21 (`RENAMED_DIRS` in project.ts). */
 const RENAMED_KINDS: readonly Kind[] = [
   kind.FUNCTION,
   kind.FUNCTION_TAG,
@@ -314,7 +314,7 @@ async function readOrFetch<T>(dir: string, name: string, url: string, convert: (
   return parsed.value;
 }
 
-/** `HashMap<String, Vec<String>>`: an object of arrays of strings. */
+/** An object of arrays of strings (the registries summary). */
 export function registryLists(v: JsonValue): RegistryLists | undefined {
   const o = asObject(v);
   if (o === undefined) return undefined;
@@ -327,7 +327,7 @@ export function registryLists(v: JsonValue): RegistryLists | undefined {
   return out;
 }
 
-/** `HashMap<String, (Map<String, Value>, Value)>`: an object of two-element arrays. */
+/** An object of `[properties, default state]` arrays (the blocks summary). */
 export function blockSummary(v: JsonValue): BlockSummary | undefined {
   const o = asObject(v);
   if (o === undefined) return undefined;

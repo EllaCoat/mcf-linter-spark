@@ -25,7 +25,7 @@ test("partial_text_keeps_the_keys_and_values_typed_so_far", () => {
   assert.deepEqual(list.items[1]!.json, { kind: "Str", value: "#mine" });
 });
 
-// The tests below have no Rust counterpart. They pin down where UTF-16 offsets replace byte offsets.
+// Offsets around characters outside ASCII, which take more than one UTF-8 byte.
 
 test("utf16_offsets_of_keys_and_values", () => {
   const node = parseDocument('{"\u00e9\u{1f600}": "x"}', "Strict");
@@ -35,7 +35,7 @@ test("utf16_offsets_of_keys_and_values", () => {
 });
 
 test("short_unicode_escape_with_wide_characters", () => {
-  // Rust counts 4 bytes after the backslash-u here, so the escape is invalid rather than unterminated.
+  // Fewer than 4 units after the backslash-u that take 4 or more UTF-8 bytes are an invalid escape, not an unterminated one.
   for (const [text, message] of [
     ['"\\u\u00e9\u00e9', "Invalid unicode escape"],
     ['"\\u1\u00e9', "Unterminated escape sequence"],

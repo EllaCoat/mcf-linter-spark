@@ -16,7 +16,7 @@ export class McDoc {
   /** Dispatcher (`minecraft:loot_condition`) to its keys (`random_chance`, `%unknown`). */
   readonly dispatchers: Map<string, Map<string, Ty>>;
   /** Dispatcher to one struct of the fields of all its entries. */
-  private merged_ = new Map<string, Ty>();
+  #merged = new Map<string, Ty>();
 
   constructor(types: Map<string, Ty>, dispatchers: Map<string, Map<string, Ty>>) {
     this.types = types;
@@ -46,7 +46,7 @@ export class McDoc {
     doc.relax(cx.version);
     const merged = new Map<string, Ty>();
     for (const d of MERGED) merged.set(d, doc.merge(d));
-    doc.merged_ = merged;
+    doc.#merged = merged;
     return doc;
   }
 
@@ -55,7 +55,7 @@ export class McDoc {
    * takes any of their types; all keys are optional. An entry whose type the version does not
    * have adds nothing. */
   merged(dispatcher: string): Ty | undefined {
-    return this.merged_.get(dispatcher);
+    return this.#merged.get(dispatcher);
   }
 
   private merge(dispatcher: string): Ty {
@@ -420,7 +420,7 @@ export const CHECK_LIMIT_MESSAGE = "Stopped checking this value against the sche
 
 export class CheckLimit {
   private left: number;
-  private reached_ = false;
+  #reached = false;
 
   constructor(left: number) {
     this.left = left;
@@ -433,7 +433,7 @@ export class CheckLimit {
 
   take(): boolean {
     if (this.left === 0) {
-      this.reached_ = true;
+      this.#reached = true;
       return false;
     }
     this.left -= 1;
@@ -441,7 +441,7 @@ export class CheckLimit {
   }
 
   reached(): boolean {
-    return this.reached_;
+    return this.#reached;
   }
 }
 

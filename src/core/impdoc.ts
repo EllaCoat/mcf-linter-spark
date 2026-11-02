@@ -238,7 +238,7 @@ export class DocComment {
   }
 }
 
-/** `str::trim_end`: strips Unicode White_Space, which differs from JS's `trimEnd` at U+0085 and U+FEFF. */
+/** Strips trailing Unicode White_Space, which differs from JS's `trimEnd` at U+0085 and U+FEFF. */
 function trimEnd(s: string): string {
   let end = s.length;
   while (end > 0 && isWhitespace(s[end - 1]!)) end -= 1;
