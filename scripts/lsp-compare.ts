@@ -307,7 +307,7 @@ async function compareMessagesToTheUser(): Promise<void> {
     ["1.21 directory names with no version set", "{}", "function"],
   ];
   for (const [what, settings, layout] of scenarios) {
-    const dir = join(tmpdir(), "ai-agent", "lsp-compare", "messages");
+    const dir = join(tmpdir(), "mcf-linter-spark-lsp-compare", "messages");
     rmSync(dir, { recursive: true, force: true });
     mkdirSync(join(dir, ".vscode"), { recursive: true });
     mkdirSync(join(dir, "data", "t", layout), { recursive: true });

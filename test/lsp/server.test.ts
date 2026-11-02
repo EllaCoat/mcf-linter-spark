@@ -19,7 +19,7 @@ const CLI = fileURLToPath(new URL("../../src/main.ts", import.meta.url));
 let projects = 0;
 
 function projectRoot(name: string): string {
-  return join(tmpdir(), "ai-agent", "mcf-linter-spark-tests", name);
+  return join(tmpdir(), "mcf-linter-spark-tests", name);
 }
 
 function writeFiles(root: string, files: readonly (readonly [string, string])[]): void {

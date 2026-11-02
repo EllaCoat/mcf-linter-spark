@@ -24,7 +24,7 @@ function check(...args: string[]) {
 }
 
 function testRoot(name: string): string {
-  return join(tmpdir(), "ai-agent", "mcf-linter-spark-tests", name);
+  return join(tmpdir(), "mcf-linter-spark-tests", name);
 }
 
 function lineCount(s: string): number {

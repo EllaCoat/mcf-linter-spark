@@ -3,9 +3,8 @@
 // Usage: node test/run.mts <path to Code.exe or the code binary> [<extension directory>]
 // The extension directory defaults to this source tree (run `pnpm run bundle` first); pass the
 // `extension/` directory of an unpacked VSIX to test the package itself.
-// Uses fresh user-data and extensions directories under the given work directory
-// (MCF_LINTER_SPARK_VSCODE_TEST_DIR, default: %TEMP%/ai-agent) so that the user's
-// VSCode profile is not touched.
+// Uses fresh user-data and extensions directories under MCF_LINTER_SPARK_VSCODE_TEST_DIR (default:
+// the temporary directory of the OS) so that the user's VSCode profile is not touched.
 
 import { runTests } from "@vscode/test-electron";
 import { build } from "esbuild";
@@ -20,7 +19,7 @@ if (!vscodeExecutablePath) {
   console.error("usage: node test/run.mts <path to Code.exe or the code binary> [<extension directory>]");
   process.exit(2);
 }
-const base = process.env.MCF_LINTER_SPARK_VSCODE_TEST_DIR ?? join(tmpdir(), "ai-agent");
+const base = process.env.MCF_LINTER_SPARK_VSCODE_TEST_DIR ?? tmpdir();
 mkdirSync(base, { recursive: true });
 const work = mkdtempSync(join(base, "mcf-linter-spark-vscode-"));
 const fixture = join(here, "fixtures", "editor");
