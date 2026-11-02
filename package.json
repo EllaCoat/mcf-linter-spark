@@ -1,0 +1,23 @@
+{
+  "name": "mcf-linter-spark",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minecraft: Java Edition のデータパックの mcfunction と JSON を検査する linter",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@12.13.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc",
+    "lint": "eslint .",
+    "test": "node scripts/test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "eslint": "^10.13.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.0"
+  }
+}
