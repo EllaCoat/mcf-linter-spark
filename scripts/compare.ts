@@ -29,7 +29,7 @@ if (rust === undefined || outDir === undefined || checkArgs.length === 0) {
 }
 mkdirSync(outDir, { recursive: true });
 
-const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const cli = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const sides = { rust: [rust], ts: [process.execPath, cli] } as const;
 
 type Run = { status: number | null; stdout: string; json: string; symbols: string; ms: number; stderr: string };

@@ -26,7 +26,7 @@ const old = await loadVersionData("1.20.4");
 const new121 = await loadVersionData("1.21");
 const latest = await loadVersionData("26.3");
 
-const TESTS = join(tmpdir(), "ai-agent", "mcf-linter-spark-ts-tests");
+const TESTS = join(tmpdir(), "mcf-linter-spark-core-tests");
 
 /** Writes the files under a fresh directory of the tests and returns it. */
 function writeFiles(name: string, files: readonly (readonly [string, string])[]): string {

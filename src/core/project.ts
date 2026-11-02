@@ -1106,12 +1106,12 @@ export function comparePaths(a: string, b: string): number {
   return x.length - y.length;
 }
 
-/** `Path == Path`: the same components. */
+/** Whether two paths have the same components. */
 export function pathEquals(a: string, b: string): boolean {
   return comparePaths(a, b) === 0;
 }
 
-/** The components in `Component`'s order: prefix, root, `.`, `..`, then names. */
+/** The components as keys that sort in this order: prefix, root, `.`, `..`, then names. */
 function componentKeys(parts: PathParts): string[] {
   const keys: string[] = [];
   if (parts.prefix !== "") keys.push(`0${parts.prefix}`);
@@ -1130,7 +1130,7 @@ function stat(path: string): Stats | undefined {
   }
 }
 
-function canonicalize(path: string): string | undefined {
+export function canonicalize(path: string): string | undefined {
   try {
     return realpathSync.native(path);
   } catch {
@@ -1140,7 +1140,7 @@ function canonicalize(path: string): string | undefined {
 
 /** The entries of a directory in the order the file system lists them, which `readdirSync`
  * does not promise. */
-function readDir(dir: string): Dirent[] | undefined {
+export function readDir(dir: string): Dirent[] | undefined {
   let d: Dir;
   try {
     d = opendirSync(dir);
@@ -1181,7 +1181,7 @@ function byNumber(a: number, b: number): number {
   return a - b;
 }
 
-function sortUnique(v: number[]): number[] {
+export function sortUnique(v: number[]): number[] {
   v.sort(byNumber);
   let w = 0;
   for (let r = 0; r < v.length; r++) if (r === 0 || v[r] !== v[r - 1]) v[w++] = v[r]!;

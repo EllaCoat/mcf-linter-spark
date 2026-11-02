@@ -1,9 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { performance } from "node:perf_hooks";
-import { Worker, isMainThread, parentPort } from "node:worker_threads";
 
-import { compareStr, isWhitespace } from "./core/chars.ts";
+import { compareStr, isControl, isWhitespace } from "./core/chars.ts";
 import { Config } from "./core/config.ts";
 import { SEVERITY_RANK, SparkError, severityAsStr } from "./core/diag.ts";
 import { type JsonValue, stringifySorted } from "./core/json-value.ts";
@@ -25,10 +24,6 @@ are analysed but not reported. --max-depth sets how many directory levels below
 <root> are searched for data packs (default 2, no limit with a spyglass.json).
 --symbols writes the declarations and definitions in the shape of the cache
 DHP writes to .cache/dls.json. Exits with 1 when an error or a warning is found.`;
-
-/** The stack of the thread that checks. Commands are parsed recursively, one level per argument,
- * up to `MAX_NODES` levels, which the default stack cannot hold. */
-const STACK_SIZE_MB = 64;
 
 interface Args {
   root: string;
@@ -96,7 +91,7 @@ function parseArgs(argv: readonly string[]): Args | string {
 
 class ArgError extends Error {}
 
-async function start(argv: readonly string[]): Promise<number> {
+export async function start(argv: readonly string[]): Promise<number> {
   const args = parseArgs(argv);
   if (typeof args === "string") {
     process.stderr.write(`${args}\n`);
@@ -192,12 +187,6 @@ function escapeControl(c: string): string {
   return `\\u{${c.codePointAt(0)!.toString(16)}}`;
 }
 
-/** Whether `c` is a control character (Unicode `Cc`). */
-function isControl(c: string): boolean {
-  const cp = c.codePointAt(0)!;
-  return cp < 0x20 || (cp >= 0x7f && cp < 0xa0);
-}
-
 export function oneLine(s: string): string {
   let line = "";
   for (const c of s) line += isControl(c) ? escapeControl(c) : c;
@@ -228,19 +217,4 @@ function escapeData(s: string): string {
 
 function escapeProperty(s: string): string {
   return escapeData(s).replaceAll(":", "%3A").replaceAll(",", "%2C");
-}
-
-if (isMainThread) {
-  if (process.argv[1] !== undefined && import.meta.filename === process.argv[1]) {
-    const worker = new Worker(new URL(import.meta.url), { argv: process.argv.slice(2), resourceLimits: { stackSizeMb: STACK_SIZE_MB } });
-    worker.on("message", (code: number) => {
-      process.exitCode = code;
-    });
-    worker.on("error", (e) => {
-      process.stderr.write(`mcf-linter-spark: ${e.stack ?? e.message}\n`);
-      process.exitCode = 2;
-    });
-  }
-} else {
-  parentPort!.postMessage(await start(process.argv.slice(2)));
 }

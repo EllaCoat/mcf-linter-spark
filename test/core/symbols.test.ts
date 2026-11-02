@@ -16,7 +16,7 @@ function dig(v: JsonValue | undefined, ...path: (string | number)[]): JsonValue 
 }
 
 async function cacheOf(name: string, files: readonly (readonly [string, string])[]): Promise<JsonValue | undefined> {
-  const root = join(tmpdir(), "ai-agent", "mcf-linter-spark-ts-tests", name);
+  const root = join(tmpdir(), "mcf-linter-spark-core-tests", name);
   rmSync(root, { recursive: true, force: true });
   for (const [rel, text] of [...files, ["pack.mcmeta", "{}"]] as const) {
     const path = join(root, rel);

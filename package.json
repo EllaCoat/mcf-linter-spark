@@ -10,14 +10,19 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "tsc",
+    "build": "node scripts/build.ts",
+    "typecheck": "tsc && tsc -p editors/vscode",
     "lint": "eslint .",
     "test": "node scripts/test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "esbuild": "^0.28.2",
     "eslint": "^10.13.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.0"
+  },
+  "dependencies": {
+    "vscode-languageserver": "^11.0.0"
   }
 }

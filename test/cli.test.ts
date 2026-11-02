@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { lineStartPath } from "../src/cli.ts";
 
-const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const CLI = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 
 function writePack(root: string, files: [string, string][]): void {
   rmSync(root, { recursive: true, force: true });
@@ -24,7 +24,7 @@ function check(...args: string[]) {
 }
 
 function testRoot(name: string): string {
-  return join(tmpdir(), "ai-agent", "mcf-linter-spark-tests", name);
+  return join(tmpdir(), "mcf-linter-spark-tests", name);
 }
 
 function lineCount(s: string): number {
@@ -66,6 +66,20 @@ test("control_characters_from_the_files_do_not_start_lines_of_the_output", () =>
     assert.ok(stdout.includes("injected"), `${format}: ${stdout}`);
     assert.ok(!stdout.includes("\u001b"), `${format}: ${stdout}`);
   }
+});
+
+test("the_command_checks_when_started_through_a_linked_directory", () => {
+  const root = testRoot("cli-linked-entry");
+  writePack(root, [
+    ["pack/pack.mcmeta", '{"pack": {"pack_format": 48, "description": ""}}'],
+    ["pack/data/t/function/f.mcfunction", "function t:missing\n"],
+    ["settings.json", '{"datapack.env.cmdVersion": "1.21"}'],
+  ]);
+  const link = join(root, "src");
+  symlinkSync(dirname(CLI), link, "junction");
+  const output = spawnSync(process.execPath, [join(link, "main.ts"), "check", join(root, "pack"), "--config", join(root, "settings.json")], { encoding: "utf8" });
+  assert.equal(output.status, 0, output.stderr);
+  assert.ok(output.stdout.includes("t:missing"), output.stdout);
 });
 
 test("a_file_name_that_reads_as_a_workflow_command_is_written_escaped", () => {
