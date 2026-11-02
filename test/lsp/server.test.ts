@@ -14,7 +14,7 @@ import { RELEASES, cmp, parse } from "../../src/core/version.ts";
 import { StorageIndex, applyChanges, codeSpan, markdownDoc, storagePathsWhileTyping } from "../../src/lsp/server.ts";
 import { LspClient, ResponseFailure } from "./client.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli.ts", import.meta.url));
+const CLI = fileURLToPath(new URL("../../src/main.ts", import.meta.url));
 
 let projects = 0;
 

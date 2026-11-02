@@ -35,7 +35,7 @@ const EDITS = Number(flag("edits") ?? "4");
 const SHOW = Number(flag("show") ?? "10");
 const INIT = flag("init") === undefined ? undefined : (JSON.parse(flag("init")!) as Json);
 
-const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const cli = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const sides = {
   rust: new LspClient(rust, ["lsp"], { stderr: "pipe", timeoutMs: 600_000 }),
   ts: new LspClient(process.execPath, [cli, "lsp"], { stderr: "pipe", timeoutMs: 600_000 }),

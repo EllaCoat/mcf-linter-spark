@@ -4,7 +4,7 @@
 // Usage:
 //   node scripts/lsp-bench.ts <project root> <file to edit> [--edits 50] [--line <text>] [--rust <mcf-linter-spark executable>]
 //
-// Runs this repository's server (`src/cli.ts lsp`), or the Rust server with --rust.
+// Runs this repository's server (`src/main.ts lsp`), or the Rust server with --rust.
 // Each edit appends a line to the file and then removes it, alternating, so the
 // file's diagnostics change between two states. `--line <text>` sets the line
 // (for example a `#declare` that many files depend on); the time until the
@@ -36,7 +36,7 @@ if (!root || !file) {
   process.exit(2);
 }
 
-const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const cli = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const proc = rust === undefined ? spawn(process.execPath, [cli, "lsp"], { stdio: ["pipe", "pipe", "inherit"] }) : spawn(rust, ["lsp"], { stdio: ["pipe", "pipe", "inherit"] });
 let buffer = Buffer.alloc(0);
 const listeners: ((msg: Message) => void)[] = [];

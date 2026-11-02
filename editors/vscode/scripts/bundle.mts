@@ -19,7 +19,7 @@ rmSync(dist, { recursive: true, force: true });
 const client = await build({ ...common, entryPoints: ["src/extension.ts"], format: "cjs", external: ["vscode"], outfile: "dist/extension.js" });
 const server = await build({
   ...common,
-  entryPoints: [join(repo, "src", "cli.ts")],
+  entryPoints: [join(repo, "src", "main.ts")],
   format: "esm",
   outfile: "dist/server.mjs",
   // The CommonJS packages in the bundle call `require` for the Node modules.
