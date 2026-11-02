@@ -63,9 +63,9 @@ test("a_root_given_with_dot_dot_gives_the_folded_path", () => {
   assert.ok(fileUri(absolute("/a/b/../c/./d")).endsWith("/a/c/d"));
 });
 
-// Not in the Rust tests: the keys of the cache are written in serde_json's order, which an integer-like
-// id would break in a plain object, and the file URI percent-encodes UTF-8 bytes.
-test("the_cache_is_written_in_serde_json_order", async () => {
+// An integer-like id would come first in a plain object; the cache keeps code-point order.
+// The file URI percent-encodes UTF-8 bytes.
+test("the_cache_keys_are_written_in_code_point_order", async () => {
   const c = await cacheOf("symbols-order", [
     ["data/t/functions/a.mcfunction", "#declare tag 10\n#declare tag 2\n#declare tag __proto__\n"],
     ["data/t/functions/日本.mcfunction", "#> t:日本\n# @public\n"],

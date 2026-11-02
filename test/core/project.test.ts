@@ -437,8 +437,8 @@ test("a_comment_link_with_a_line_leads_to_that_line", async () => {
   assert.equal(p.linkLineAt(a, text.indexOf("t:b)") + 1), undefined);
 });
 
-// The tests below are not in the Rust tests: the path, file system and text rules that Rust's `Path`,
-// `read_dir` and `from_utf8_lossy` gave and this port writes out.
+// The rules for paths, directory listings and text decoding where this project does not follow
+// the defaults of `node:path` and `node:fs`.
 
 test("paths_are_compared_by_component", () => {
   assert.equal(pathStartsWith("/a/b/c", "/a/b"), true);

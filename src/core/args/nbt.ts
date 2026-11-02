@@ -361,7 +361,7 @@ function classify(text: string): NbtValue {
   const last = text.slice(-1).toLowerCase();
   if (last === "f" && isDecimal(body, false)) {
     const v = parseF64(body);
-    // ponytail: f64 then f32 rounds twice, unlike Rust's `parse::<f32>`; parse exactly if 25+ digit floats near a midpoint matter
+    // ponytail: f64 then f32 rounds twice, unlike an exact f32 parse; parse exactly if 25+ digit floats near a midpoint matter
     return v === undefined ? string() : { kind: "Float", value: Math.fround(v) };
   }
   if (last === "d" && isDecimal(body, false)) {

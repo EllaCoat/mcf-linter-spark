@@ -453,7 +453,7 @@ function number(token: string, defaultType: IntType): { value: NbtValue; suffixe
   }
   const parsed = parseF64(text);
   if (parsed === undefined) return new NumberError(`Failed to parse number: ${token}`);
-  // ponytail: f64 then f32 rounds twice, unlike Rust's `parse::<f32>`; parse exactly if 25+ digit floats near a midpoint matter
+  // ponytail: f64 then f32 rounds twice, unlike an exact f32 parse; parse exactly if 25+ digit floats near a midpoint matter
   const v = single ? Math.fround(parsed) : parsed;
   if (!Number.isFinite(v)) return new NumberError("Non-finite numbers are not allowed");
   return { value: single ? { kind: "Float", value: v } : { kind: "Double", value: v }, suffixed: suffix !== "" };

@@ -26,8 +26,8 @@ are analysed but not reported. --max-depth sets how many directory levels below
 --symbols writes the declarations and definitions in the shape of the cache
 DHP writes to .cache/dls.json. Exits with 1 when an error or a warning is found.`;
 
-/** The stack of the thread that checks, as large as the Rust version's (64 MiB). Commands are
- * parsed recursively, one level per argument, up to `MAX_NODES` levels. */
+/** The stack of the thread that checks. Commands are parsed recursively, one level per argument,
+ * up to `MAX_NODES` levels, which the default stack cannot hold. */
 const STACK_SIZE_MB = 64;
 
 interface Args {
@@ -184,7 +184,7 @@ function writeOrFail(path: string, text: string): void {
   }
 }
 
-/** Rust's `char::escape_default` of a control character. */
+/** A control character as an escape: `\t`, `\r`, `\n`, else `\u{..}`. */
 function escapeControl(c: string): string {
   if (c === "\t") return "\\t";
   if (c === "\r") return "\\r";
@@ -192,7 +192,7 @@ function escapeControl(c: string): string {
   return `\\u{${c.codePointAt(0)!.toString(16)}}`;
 }
 
-/** Whether `c` is a control character (Unicode `Cc`), as Rust's `char::is_control`. */
+/** Whether `c` is a control character (Unicode `Cc`). */
 function isControl(c: string): boolean {
   const cp = c.codePointAt(0)!;
   return cp < 0x20 || (cp >= 0x7f && cp < 0xa0);

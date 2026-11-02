@@ -13,7 +13,7 @@ function value(src: string): NbtValue {
   return r.value;
 }
 
-/** Rust's `{:?}` of the values that these tests show; the other variants print their name. */
+/** A value in the form the expected strings of these tests use; kinds other than strings print their name. */
 function debugValue(v: NbtValue): string {
   if (v.kind !== "String") return v.kind;
   const quote = v.quote === undefined ? "None" : `Some(${v.quote.charCodeAt(0)})`;

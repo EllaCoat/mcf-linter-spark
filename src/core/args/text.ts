@@ -112,7 +112,7 @@ function isBoolOrNumber(node: Node): boolean {
   return node.json.kind === "Bool" || node.json.kind === "Num";
 }
 
-/** `i64::from_str_radix(text, 16)`: an optional sign, then at least one hex digit. */
+/** A hex integer in the i64 range: an optional sign, then at least one hex digit. */
 function parseHexI64(text: string): bigint | undefined {
   if (!/^[+-]?[0-9a-fA-F]+$/.test(text)) return undefined;
   const negative = text.startsWith("-");
@@ -274,7 +274,7 @@ class Checker {
     this.depth += 1;
     const check = this.decodeComponent(node);
     this.depth = depth;
-    // Like `Vec::resize_with`: the maps deeper than this one are dropped.
+    // The maps deeper than this one are dropped, and missing levels are added.
     if (this.components.length > depth + 1) this.components.length = depth + 1;
     while (this.components.length < depth + 1) this.components.push(new Map());
     this.components[depth]!.set(node, [check, this.cx.effects.slice(mark)]);

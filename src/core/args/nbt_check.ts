@@ -127,7 +127,7 @@ function rootType(doc: McDoc, target: Target): Ty {
   return doc.merged(dispatcher) ?? ANY;
 }
 
-/** A tag as the resolver reads it for the index of a dispatcher (`impl Tree for NbtNode`). */
+/** A tag as the resolver reads it for the index of a dispatcher. */
 class NbtTree implements Tree {
   readonly node: NbtNode;
 

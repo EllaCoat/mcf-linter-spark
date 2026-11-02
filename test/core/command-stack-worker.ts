@@ -1,4 +1,4 @@
-// Parses lines in a worker whose stack is as large as the Rust test's thread (64 MiB).
+// Parses lines in a worker whose stack is as large as the CLI's (64 MiB).
 import { parentPort, workerData } from "node:worker_threads";
 
 import { parseCommand } from "../../src/core/command.ts";

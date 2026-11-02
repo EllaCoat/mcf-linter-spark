@@ -1014,8 +1014,8 @@ function toSlash(p: string): string {
   return p.replaceAll("\\", "/");
 }
 
-// What Rust's `Path` does and `node:path` does not: components compare, not strings. Joining
-// appends without normalising, so `./a` stays `./a`.
+// Paths compare and match by component, not as strings as with `node:path`. Joining appends
+// without normalising, so `./a` stays `./a`.
 
 const WINDOWS = sep === "\\";
 
@@ -1027,7 +1027,7 @@ interface PathParts {
   /** `C:` (the letter in upper case) or `\\server\share`; empty without one. */
   prefix: string;
   root: boolean;
-  /** `.` only first, as `Path::components` keeps it; `..` stays. */
+  /** `.` is kept only as the first name; `..` stays. */
   names: string[];
   starts: number[];
   ends: number[];
@@ -1069,7 +1069,7 @@ function parsePath(p: string): PathParts {
   return { prefix, root, names, starts, ends };
 }
 
-/** `Path::starts_with`: whole components, case-sensitive except for a drive letter. */
+/** Whether `base` is a prefix of `path` in whole components, case-sensitive except for a drive letter. */
 export function pathStartsWith(path: string, base: string): boolean {
   return startsWithParts(parsePath(path), parsePath(base));
 }
@@ -1078,8 +1078,8 @@ function startsWithParts(a: PathParts, b: PathParts): boolean {
   return a.prefix === b.prefix && a.root === b.root && b.names.length <= a.names.length && b.names.every((n, i) => a.names[i] === n);
 }
 
-/** `Path::strip_prefix`: the rest of `path` after the components of `base`, with its own
- * separators, or `undefined` when `base` is not a prefix. */
+/** The rest of `path` after the components of `base`, with its own separators, or `undefined`
+ * when `base` is not a prefix. */
 export function stripPrefix(path: string, base: string): string | undefined {
   const a = parsePath(path);
   const b = parsePath(base);
@@ -1088,14 +1088,14 @@ export function stripPrefix(path: string, base: string): string | undefined {
   return n === a.names.length ? "" : path.slice(a.starts[n]!, a.ends[a.ends.length - 1]!);
 }
 
-/** `Path::join` of a relative name. */
+/** A relative `name` appended to `base` with one separator. */
 export function joinPath(base: string, name: string): string {
   if (base === "") return name;
   if (isSeparator(base[base.length - 1]!) || (WINDOWS && /^[A-Za-z]:$/.test(base))) return base + name;
   return base + sep + name;
 }
 
-/** `Path::cmp`: component by component, a path that is a prefix of another first. */
+/** Orders paths component by component, a path that is a prefix of another first. */
 export function comparePaths(a: string, b: string): number {
   const x = componentKeys(parsePath(a));
   const y = componentKeys(parsePath(b));
@@ -1120,7 +1120,7 @@ function componentKeys(parts: PathParts): string[] {
   return keys;
 }
 
-// File system reads that fail as Rust's do: a path that cannot be read is absent.
+// File system reads give `undefined` when they fail: a path that cannot be read counts as absent.
 
 function stat(path: string): Stats | undefined {
   try {
@@ -1138,8 +1138,8 @@ function canonicalize(path: string): string | undefined {
   }
 }
 
-/** The entries of a directory in the order the file system lists them, as `read_dir` does.
- * `readdirSync` is about twice as fast but does not promise that order. */
+/** The entries of a directory in the order the file system lists them, which `readdirSync`
+ * does not promise. */
 function readDir(dir: string): Dirent[] | undefined {
   let d: Dir;
   try {
@@ -1158,7 +1158,7 @@ function readDir(dir: string): Dirent[] | undefined {
   return out;
 }
 
-/** `DirEntry::file_type().is_dir()`: a symlink to a directory is not one. */
+/** Whether the entry is a directory itself; a symlink to a directory is not one. */
 function isRealDirectory(e: Dirent, dir: string): boolean {
   if (e.isDirectory()) return true;
   if (e.isFile() || e.isSymbolicLink()) return false;
@@ -1170,7 +1170,7 @@ function isRealDirectory(e: Dirent, dir: string): boolean {
   }
 }
 
-/** `str::lines().count()`. */
+/** The number of lines, a last line without `\n` included. */
 function countLines(text: string): number {
   let n = 0;
   for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) n++;
@@ -1181,7 +1181,6 @@ function byNumber(a: number, b: number): number {
   return a - b;
 }
 
-/** Sorts ascending and drops repeats, in place. */
 function sortUnique(v: number[]): number[] {
   v.sort(byNumber);
   let w = 0;

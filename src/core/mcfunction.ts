@@ -122,14 +122,12 @@ interface Line {
   eol: boolean;
 }
 
-/** Leading spaces and tabs. */
 function indent(line: Line): number {
   let i = 0;
   while (i < line.text.length && (line.text[i] === " " || line.text[i] === "\t")) i++;
   return i;
 }
 
-/** The number of spaces and tabs at the start of `s` from `from`. */
 function blank(s: string, from: number): number {
   let i = from;
   while (i < s.length && (s[i] === " " || s[i] === "\t")) i++;
@@ -282,7 +280,7 @@ function flatten(anno: Anno, prefix: Token[], out: Token[][]): void {
   prefix.pop();
 }
 
-// Rust's `\b` is a Unicode word boundary; JS's is ASCII, so the boundary is spelled out.
+// JS's `\b` is an ASCII word boundary, so the Unicode one is spelled out.
 const MACRO_FUNCTION = /(?<![\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\p{Join_Control}])function[\t ]+(#?[A-Za-z0-9_.\-]+:[A-Za-z0-9_.\-/]+|#?[A-Za-z0-9_.\-/]+)/dgu;
 
 class Analyzer {

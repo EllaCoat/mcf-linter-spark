@@ -21,8 +21,8 @@ interface Unit {
   alias: string | undefined;
 }
 
-/** The cache as a `JsonValue`. Its objects hold their keys in insertion order, which for
- * integer-like ids is not serde_json's: write it with `stringifySorted`. */
+/** The cache as a `JsonValue`. A JS object lists integer-like keys first, so write it with
+ * `stringifySorted`, which orders the keys by code point. */
 export function dlsCache(project: Project): JsonValue {
   const root = absolute(project.root);
   const rootUri = fileUri(root);
@@ -84,7 +84,7 @@ function unit(cache: Map<Kind, Map<string, Unit>>, k: Kind, id: string): Unit {
 function position(f: FileState, index: LineIndex, uri: string, start: number, end: number, visibility: SiteVisibility): JsonObject {
   const [startLine, startChar] = index.position(f.text, start);
   const [endLine, endChar] = index.position(f.text, end);
-  // The keys are in serde_json's order.
+  // The keys are in code-point order.
   const p: JsonObject = {
     end: index.utf16Offset(f.text, end),
     endChar,

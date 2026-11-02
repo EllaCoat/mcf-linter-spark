@@ -493,7 +493,7 @@ export function time(r: Reader, min: number): PResult<void> {
   if (ticks < BigInt(min)) return r.errorSpan(start, `Tick count must not be less than ${min}, found ${ticks}`);
 }
 
-/** Rust's `f32::round` / `f64::round`: halves go away from zero (`Math.round` sends them toward +infinity). */
+/** Rounds halves away from zero (`Math.round` sends them toward +infinity). */
 function roundHalfAwayFromZero(x: number): number {
   return x < 0 ? -Math.round(-x) : Math.round(x);
 }

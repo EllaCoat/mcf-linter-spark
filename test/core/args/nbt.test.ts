@@ -108,7 +108,7 @@ test("whitespace_and_trailing_commas", () => {
 });
 
 test("non_breaking_space_is_not_whitespace", () => {
-  // Rust counts UTF-8 bytes: (3, 5) and 6..7. Here U+00A0 and U+3000 are one unit each.
+  // U+00A0 and U+3000 are one UTF-16 unit each.
   assert.deepEqual(error("{a:\u{a0}1}"), [3, 4, "Expected value"]);
   assert.deepEqual(value("{a:\u{3000}1}"), {
     kind: "Compound",
