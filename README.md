@@ -2,7 +2,7 @@
 
 Minecraft: Java Edition 1.20.3〜26.3 のデータパックの `.mcfunction` と JSON を検査する linter です。Datapack Helper Plus 3.x（DHP）の lint 設定と [IMP-Doc](https://github.com/SpyglassMC/Spyglass/wiki/IMP-Doc) の公開範囲に沿って診断し、CI 用のコマンドと VSCode 拡張機能（language server）の両方で動きます。
 
-- TypeScript で書かれていて、Node.js で動きます。Rust で書いた前の版は [mcf-linter-spark-R](https://github.com/EllaCoat/mcf-linter-spark-R) にあり、同じデータパックに同じ診断を出します。
+- TypeScript で書かれていて、Node.js で動きます。Rust で書いた前の版は [mcf-linter-spark-R](https://github.com/EllaCoat/mcf-linter-spark-R) にあります。検査の内容、設定、データの cache の置き場は同じなので、そのまま置き換えられます。
 - 検査するバージョンは設定の `datapack.env.cmdVersion` で指定します。指定が無ければ `spyglass.json` の `env.gameVersion` を使い、どちらも無ければ 1.20.4 です。
 - 指定できるのは 1.20.3〜26.3 のリリースです。コマンドの一覧と書き方、registry、データパックのディレクトリ名と JSON の種類、NBT と JSON の型は、そのバージョンのものを使います。1.20.3 は 1.20.4 のデータで検査します。
 - バージョンの指定が無いのに、1.21 からの単数形のディレクトリ（`function/` など）があるデータパックでは、コマンドと VSCode 拡張機能がそのことを知らせます。
@@ -30,7 +30,6 @@ Minecraft: Java Edition 1.20.3〜26.3 のデータパックの `.mcfunction` と
 Node.js 24 以上で動きます。[Releases](https://github.com/EllaCoat/mcf-linter-spark/releases) から `mcf-linter-spark.mjs` をダウンロードし、`node` で実行します。
 
 ```sh
-curl -fsSLO https://github.com/EllaCoat/mcf-linter-spark/releases/download/v1.0.0/mcf-linter-spark.mjs
 node mcf-linter-spark.mjs check .
 ```
 
@@ -78,16 +77,22 @@ GitHub Actions でデータパックを検査する設定例です。
 - uses: actions/setup-node@v7
   with:
     node-version: 24
-- uses: actions/cache@v6
+- uses: actions/cache/restore@v6
+  id: data
   with:
     path: ~/.cache/mcf-linter-spark
     key: mcf-linter-spark-data-1.20.4-c85548aae6f2-5aab1da2ff00
 - run: curl -fsSLO https://github.com/EllaCoat/mcf-linter-spark/releases/download/v1.0.0/mcf-linter-spark.mjs
 - run: node mcf-linter-spark.mjs check . --ignore 'animated_java:**' --format github
+- uses: actions/cache/save@v6
+  if: always() && steps.data.outputs.cache-hit != 'true'
+  with:
+    path: ~/.cache/mcf-linter-spark
+    key: mcf-linter-spark-data-1.20.4-c85548aae6f2-5aab1da2ff00
 ```
 
 - URL の `v1.0.0` で使う版を固定します。
-- `actions/cache` でバニラのデータを実行の間で残し、取得できない時に CI が落ちるのを防ぎます。cache は job が成功した時に保存されます。
+- cache でバニラのデータを実行の間で残し、取得できない時に CI が落ちるのを防ぎます。`check` は warning でも終了コード 1 で終わるので、保存は `if: always()` で検査の結果に関わらず行います。
 - key には取得するデータの commit を入れています。データの commit が違うバージョンの mcf-linter-spark では、新しい cache になります。
 - 例の key は 1.20.4 を検査するときのものです。ほかのバージョンでは、`1.20.4-c85548aae6f2` をそのバージョンの cache のフォルダ名（バージョンと、[`version.ts`](src/core/version.ts) にある commit の先頭 12 文字。26.3 なら `26.3-d96c75fec200`）にします。
 
@@ -99,7 +104,7 @@ Minecraft のデータは同梱していません。初回の実行で、決ま�
 - NBT とデータパックの JSON の型：[vanilla-mcdoc](https://github.com/SpyglassMC/vanilla-mcdoc) の `generated` branch の `symbols.json` から取得します（約 2.7 MB、取得元：`https://raw.githubusercontent.com/SpyglassMC/vanilla-mcdoc/5aab1da2ff00955cdb66f0d6c2a1154ef691a015/symbols.json`）。1 つのファイルにすべてのバージョンの型が入っているので、どのバージョンでも同じ commit のファイルを使います。
 - 環境変数 `MCF_LINTER_SPARK_DATA_DIR` で、`<cache ディレクトリ>/mcf-linter-spark` の代わりの置き場を指定できます。CI の cache から戻したディレクトリや、ネットワークの無い環境でファイルを置いたディレクトリに使います。
 - Rust 版の mcf-linter-spark-R と同じ置き場と同じファイルを使うので、Rust 版で取得済みのデータはそのまま読めます。
-- プロキシを通す環境では、環境変数 `NODE_USE_ENV_PROXY=1` を付けて実行すると、`HTTPS_PROXY` のプロキシから取得します。
+- プロキシを通す環境では、環境変数 `NODE_USE_ENV_PROXY=1` を付けてコマンドを実行すると、`HTTPS_PROXY` のプロキシから取得します。
 - ネットワークの無い環境では、検査するバージョンのフォルダに、上の URL のファイルを次の名前で置きます。
   - フォルダ名の `<バージョン>-<commit>` では、`<commit>` の所に commit の先頭 12 文字を書きます。1.20.4 なら `1.20.4-c85548aae6f2`、26.3 なら `26.3-d96c75fec200` です。1.20.3 は 1.20.4 のフォルダを使います。
   - vanilla-mcdoc のファイルはどのバージョンのフォルダにも同じものを置きます。
