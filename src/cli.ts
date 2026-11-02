@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { compareStr, isWhitespace } from "./core/chars.ts";
+import { compareStr, isControl, isWhitespace } from "./core/chars.ts";
 import { Config } from "./core/config.ts";
 import { SEVERITY_RANK, SparkError, severityAsStr } from "./core/diag.ts";
 import { type JsonValue, stringifySorted } from "./core/json-value.ts";
@@ -185,12 +185,6 @@ function escapeControl(c: string): string {
   if (c === "\r") return "\\r";
   if (c === "\n") return "\\n";
   return `\\u{${c.codePointAt(0)!.toString(16)}}`;
-}
-
-/** Whether `c` is a control character (Unicode `Cc`). */
-function isControl(c: string): boolean {
-  const cp = c.codePointAt(0)!;
-  return cp < 0x20 || (cp >= 0x7f && cp < 0xa0);
 }
 
 export function oneLine(s: string): string {

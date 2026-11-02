@@ -1,7 +1,7 @@
 // The language server: diagnostics for the workspace, IMP-Doc hovers, completion, definitions,
 // references, and the links in comments.
 
-import { type Dir, opendirSync, realpathSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   type CompletionItem,
@@ -28,7 +28,7 @@ import {
   createConnection,
 } from "vscode-languageserver/node";
 
-import { compareStr, isWhitespace } from "../core/chars.ts";
+import { compareStr, isControl, trimEndWhiteSpace } from "../core/chars.ts";
 import { type Candidate, type Category, type Source, collectStoragePaths, complete, signature } from "../core/complete.ts";
 import { Config } from "../core/config.ts";
 import * as datajson from "../core/datajson.ts";
@@ -36,7 +36,7 @@ import type { Severity } from "../core/diag.ts";
 import { type Kind, kind } from "../core/facts.ts";
 import { commentLinks } from "../core/mcfunction.ts";
 import { LineIndex } from "../core/position.ts";
-import { type FileId, Project, defaultMaxDepth, joinPath, pathEquals, readText } from "../core/project.ts";
+import { type FileId, Project, canonicalize, defaultMaxDepth, joinPath, pathEquals, readDir, readText, sortUnique } from "../core/project.ts";
 
 /** Runs the server over the process's stdin and stdout until the client ends the session. */
 export function run(): void {
@@ -79,8 +79,8 @@ function toFileUrl(path: string): URL | undefined {
   }
 }
 
-/** The key of a path in the editor's open documents: separators as the platform writes them and
- * a capital drive letter, as `Path` compares them. */
+/** The key of a path in the editor's open documents: `\` for every separator and a capital drive
+ * letter, so that the spellings of one path that the editor and the file system give match. */
 function pathId(path: string): string {
   const p = path.replaceAll("/", "\\");
   return /^[a-z]:/.test(p) ? p[0]!.toUpperCase() + p.slice(1) : p;
@@ -238,7 +238,7 @@ class Server {
       const added = project.addFile(path);
       if (added === undefined) return;
       fid = added[0];
-      affected = sortedUnique([...added[1], ...project.setText(fid, text)]);
+      affected = sortUnique([...added[1], ...project.setText(fid, text)]);
     }
     if (this.storagePaths !== undefined && project.files[fid]!.kind === kind.FUNCTION) this.storagePaths.set(fid, text);
     // The edited file first, even with no diagnostics, so that the client
@@ -283,7 +283,7 @@ class Server {
         if (added !== undefined) affected.push(...added[1]);
       }
     }
-    affected = sortedUnique(affected);
+    affected = sortUnique(affected);
     this.publishAll(affected);
   }
 
@@ -300,7 +300,7 @@ class Server {
       affected.push(...project.removeFile(f));
     }
     for (const p of paths) this.sendDiagnostics(p, []);
-    this.publishAll(sortedUnique(affected));
+    this.publishAll(sortUnique(affected));
   }
 
   private publishAll(files: readonly FileId[]): void {
@@ -627,25 +627,6 @@ export class StorageIndex {
   }
 }
 
-/** The entries of a directory in the order the file system lists them, as `read_dir` does. */
-function readDir(dir: string): { name: string }[] | undefined {
-  let d: Dir;
-  try {
-    d = opendirSync(dir);
-  } catch {
-    return undefined;
-  }
-  const out: { name: string }[] = [];
-  try {
-    for (let e = d.readSync(); e !== null; e = d.readSync()) out.push(e);
-  } catch {
-    // an entry that cannot be read ends the listing
-  } finally {
-    d.closeSync();
-  }
-  return out;
-}
-
 function isDir(path: string): boolean {
   try {
     return statSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
@@ -662,13 +643,6 @@ function isFile(path: string): boolean {
   }
 }
 
-function canonicalize(path: string): string | undefined {
-  try {
-    return realpathSync.native(path);
-  } catch {
-    return undefined;
-  }
-}
 
 function filesIn(dir: string): string[] {
   const out: string[] = [];
@@ -693,10 +667,6 @@ function filesIn(dir: string): string[] {
   return out;
 }
 
-function sortedUnique(v: FileId[]): FileId[] {
-  v.sort((a, b) => a - b);
-  return v.filter((x, i) => i === 0 || x !== v[i - 1]);
-}
 
 /** Applies the changes of an incremental `didChange`, in order. Ranges are in
  * UTF-16 positions of the text as each change finds it. */
@@ -719,14 +689,7 @@ export function applyChanges(text: string, changes: readonly TextDocumentContent
 export function markdownDoc(doc: string): string {
   const lines = doc.split("\n");
   if (lines[lines.length - 1] === "") lines.pop();
-  return lines.map((l) => `${trimEndRust(l).replaceAll("![", "&#33;[")}  `).join("\n");
-}
-
-/** `str::trim_end`: Unicode White_Space only (JS's `trimEnd` also strips U+FEFF but not U+0085). */
-function trimEndRust(s: string): string {
-  let end = s.length;
-  while (end > 0 && isWhitespace(s[end - 1]!)) end -= 1;
-  return s.slice(0, end);
+  return lines.map((l) => `${trimEndWhiteSpace(l).replaceAll("![", "&#33;[")}  `).join("\n");
 }
 
 export function codeSpan(text: string): string {
@@ -739,13 +702,7 @@ export function codeSpan(text: string): string {
   return `${fence}${pad}${escaped}${pad}${fence}`;
 }
 
-/** Whether `c` is a control character (Unicode `Cc`), as Rust's `char::is_control`. */
-function isControl(c: string): boolean {
-  const cp = c.codePointAt(0)!;
-  return cp < 0x20 || (cp >= 0x7f && cp < 0xa0);
-}
-
-/** Rust's `char::escape_debug` of a control character. */
+/** A control character as an escape: `\0`, `\t`, `\r`, `\n`, else `\u{..}`. */
 function escapeDebug(c: string): string {
   switch (c) {
     case "\0":

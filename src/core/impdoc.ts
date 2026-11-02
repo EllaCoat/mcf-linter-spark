@@ -1,7 +1,7 @@
 // IMP-Doc: `#>` doc comments, their annotations, and visibility, following
 // DHP 3.4.19 (`DocCommentPlugin.ts`, `ClientCache.ts`).
 
-import { isWhitespace } from "./chars.ts";
+import { trimEndWhiteSpace } from "./chars.ts";
 import type { VersionData } from "./data.ts";
 import type { Kind } from "./facts.ts";
 import { asStr, get, isObject, type JsonValue } from "./json-value.ts";
@@ -178,7 +178,7 @@ export class DocComment {
 
   /** The text shown on hover (`DocCommentNode.valueOf`). */
   display(): string {
-    let s = trimEnd(this.plainText);
+    let s = trimEndWhiteSpace(this.plainText);
     for (const a of this.annotations) {
       s += "\n\n";
       s += a.map((t) => t.text).join(" ");
@@ -238,9 +238,3 @@ export class DocComment {
   }
 }
 
-/** Strips trailing Unicode White_Space, which differs from JS's `trimEnd` at U+0085 and U+FEFF. */
-function trimEnd(s: string): string {
-  let end = s.length;
-  while (end > 0 && isWhitespace(s[end - 1]!)) end -= 1;
-  return s.slice(0, end);
-}

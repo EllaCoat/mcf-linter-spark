@@ -12,6 +12,30 @@ export function isWhitespace(c: string): boolean {
   return cp !== undefined && WHITESPACE.has(cp);
 }
 
+/** Whether `c` is a control character (Unicode `Cc`). */
+export function isControl(c: string): boolean {
+  const cp = c.codePointAt(0)!;
+  return cp < 0x20 || (cp >= 0x7f && cp < 0xa0);
+}
+
+/** `s` without leading Unicode White_Space. JS's `trimStart` also strips U+FEFF but not U+0085. */
+export function trimStartWhiteSpace(s: string): string {
+  let start = 0;
+  while (start < s.length && isWhitespace(s[start]!)) start += 1;
+  return s.slice(start);
+}
+
+/** `s` without trailing Unicode White_Space. JS's `trimEnd` also strips U+FEFF but not U+0085. */
+export function trimEndWhiteSpace(s: string): string {
+  let end = s.length;
+  while (end > 0 && isWhitespace(s[end - 1]!)) end -= 1;
+  return s.slice(0, end);
+}
+
+export function trimWhiteSpace(s: string): string {
+  return trimStartWhiteSpace(trimEndWhiteSpace(s));
+}
+
 /** Space, tab, LF, form feed, or CR (not vertical tab). */
 export function isAsciiWhitespace(c: string): boolean {
   return c === " " || c === "\t" || c === "\n" || c === "\f" || c === "\r";
@@ -119,7 +143,7 @@ export function debugStr(s: string): string {
     else if (c === "\r") out += "\\r";
     else if (c === "\t") out += "\\t";
     else if (c === "\0") out += "\\0";
-    else if (cp < 0x20 || (cp >= 0x7f && cp < 0xa0)) out += `\\u{${cp.toString(16)}}`;
+    else if (isControl(c)) out += `\\u{${cp.toString(16)}}`;
     else out += c;
   }
   return out + '"';

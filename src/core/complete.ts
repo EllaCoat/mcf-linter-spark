@@ -17,13 +17,13 @@ import * as basic from "./args/basic.ts";
 import * as entity from "./args/entity.ts";
 import * as nbt from "./args/nbt.ts";
 import * as nbtCheck from "./args/nbt_check.ts";
-import { compareStr, isAscii, isWhitespace } from "./chars.ts";
+import { compareStr, isAscii, trimEndWhiteSpace, trimStartWhiteSpace, trimWhiteSpace } from "./chars.ts";
 import { type Effect, MAX_NODES } from "./command.ts";
 import type { Config } from "./config.ts";
 import { DIMENSIONS, type VersionData } from "./data.ts";
 import { ParseError } from "./diag.ts";
 import { type Kind, fullId, kind } from "./facts.ts";
-import { Reader, isAllowedInUnquoted } from "./reader.ts";
+import { Reader, isAllowedInUnquoted, isQuote } from "./reader.ts";
 import { type NodeId, type Parser, ROOT, hasChildren, nodeName } from "./tree.ts";
 
 export interface Candidate {
@@ -405,7 +405,7 @@ class Walker {
       }
       case "NbtPath": {
         if (path.findLast((n) => n.literal)?.name === "storage") {
-          const before = trimEnd(this.src.slice(0, pos));
+          const before = trimEndWhiteSpace(this.src.slice(0, pos));
           const storage = before.slice(before.lastIndexOf(" ") + 1);
           this.storagePath(fullId(storage), partial, pos);
         } else {
@@ -567,19 +567,19 @@ class Walker {
       const innerStart = open + 1;
       const comma = partial.lastIndexOf(",");
       const segStart = comma >= innerStart ? comma + 1 : innerStart;
-      const seg = trimStart(partial.slice(segStart));
+      const seg = trimStartWhiteSpace(partial.slice(segStart));
       const segPos = pos + partial.length - seg.length;
       const eq = seg.indexOf("=");
       if (eq >= 0) {
         const key = seg.slice(0, eq);
-        const value = trimStart(seg.slice(eq + 1));
-        const found = props.find(([k]) => k === trimEnd(key));
+        const value = trimStartWhiteSpace(seg.slice(eq + 1));
+        const found = props.find(([k]) => k === trimEndWhiteSpace(key));
         if (found !== undefined) this.values(found[1], value, pos + partial.length - value.length);
       } else {
         const used = new Set<string>();
         for (const p of partial.slice(innerStart, segStart).split(",")) {
           const e = p.indexOf("=");
-          if (e >= 0) used.add(trim(p.slice(0, e)));
+          if (e >= 0) used.add(trimWhiteSpace(p.slice(0, e)));
         }
         for (const [key] of props) {
           if (!used.has(key) && startsWithIgnoreCase(key, seg)) this.push(`${key}=`, segPos, "Property", undefined);
@@ -643,16 +643,16 @@ class Walker {
       else if (depth === 0 && (b === "," || (predicate && b === "|"))) segStart = i + 1;
     }
     if (depth < 0) return;
-    let seg = trimStart(partial.slice(segStart));
+    let seg = trimStartWhiteSpace(partial.slice(segStart));
     if (seg.startsWith("!")) seg = seg.slice(1);
     const segPos = pos + partial.length - seg.length;
     const predicates = this.data.atLeast([1, 21, 5]) ? "minecraft:data_component_predicate_type" : "minecraft:item_sub_predicate_type";
     const op = firstIndexOf(seg, "=~");
     if (op >= 0) {
-      const value = trimStart(seg.slice(op + 1));
+      const value = trimStartWhiteSpace(seg.slice(op + 1));
       if (value.startsWith("{")) {
         const category = seg[op] === "~" ? "ComponentPredicate" : "DataComponent";
-        const target = nbtCheck.new_(category, fullId(trimEnd(seg.slice(0, op))));
+        const target = nbtCheck.new_(category, fullId(trimEndWhiteSpace(seg.slice(0, op))));
         this.compound(target, value, pos + partial.length - value.length);
       }
     } else {
@@ -694,7 +694,7 @@ class Walker {
         depth -= 1;
       } else if (b === "," && depth === 0) segStart = i + 1;
     }
-    const seg = trimStart(partial.slice(segStart));
+    const seg = trimStartWhiteSpace(partial.slice(segStart));
     const segPos = pos + partial.length - seg.length;
     const eq = seg.indexOf("=");
     if (eq < 0) {
@@ -704,11 +704,11 @@ class Walker {
       return;
     }
     const key = seg.slice(0, eq);
-    let value = trimStart(seg.slice(eq + 1));
+    let value = trimStartWhiteSpace(seg.slice(eq + 1));
     if (value.startsWith("!")) value = value.slice(1);
-    value = trimStart(value);
+    value = trimStartWhiteSpace(value);
     const valuePos = pos + partial.length - value.length;
-    switch (trimEnd(key)) {
+    switch (trimEndWhiteSpace(key)) {
       case "type":
         if (value.startsWith("#")) {
           const tags = [...this.source.symbols(kind.ENTITY_TYPE_TAG), ...(this.data.tags.get("entity_type") ?? [])];
@@ -742,10 +742,10 @@ class Walker {
       case "advancements": {
         if (!value.startsWith("{")) return;
         const body = value.slice(1);
-        const entry = trimStart(body.slice(body.lastIndexOf(",") + 1));
+        const entry = trimStartWhiteSpace(body.slice(body.lastIndexOf(",") + 1));
         if (entry.includes("=")) return;
         const entryPos = pos + partial.length - entry.length;
-        if (trimEnd(key) === "scores") this.ids(this.source.symbols(kind.OBJECTIVE), entry, entryPos, kind.OBJECTIVE);
+        if (trimEndWhiteSpace(key) === "scores") this.ids(this.source.symbols(kind.OBJECTIVE), entry, entryPos, kind.OBJECTIVE);
         else this.symbol(kind.ADVANCEMENT, entry, entryPos);
         break;
       }
@@ -833,24 +833,6 @@ function asciiLower(unit: number): number {
   return unit >= 0x41 && unit <= 0x5a ? unit + 0x20 : unit;
 }
 
-/** `trimStart`, `trimEnd` and `trim` strip Unicode White_Space, which differs from JS's `trim`
- * at U+0085 and U+FEFF. */
-function trimStart(s: string): string {
-  let start = 0;
-  while (start < s.length && isWhitespace(s[start]!)) start += 1;
-  return s.slice(start);
-}
-
-function trimEnd(s: string): string {
-  let end = s.length;
-  while (end > 0 && isWhitespace(s[end - 1]!)) end -= 1;
-  return s.slice(0, end);
-}
-
-function trim(s: string): string {
-  return trimStart(trimEnd(s));
-}
-
 /** A step from a compound to a tag inside it. */
 type Step =
   | { kind: "Key"; key: string }
@@ -887,7 +869,7 @@ function compoundCursor(text: string): [Step[], number] | undefined {
         break;
       case ":":
         if (top?.kind === "Compound" && top.atKey) {
-          top.key = unquote(trim(text.slice(top.token, i)));
+          top.key = unquote(trimWhiteSpace(text.slice(top.token, i)));
           top.atKey = false;
         }
         break;
@@ -904,7 +886,7 @@ function compoundCursor(text: string): [Step[], number] | undefined {
   }
   const last = frames[frames.length - 1];
   if (last?.kind !== "Compound" || !last.atKey) return undefined;
-  const keyStart = text.length - trimStart(text.slice(last.token)).length;
+  const keyStart = text.length - trimStartWhiteSpace(text.slice(last.token)).length;
   const steps: Step[] = [];
   for (const f of frames.slice(0, -1)) {
     if (f.kind === "List") steps.push({ kind: "Element" });
@@ -973,13 +955,10 @@ function topLevelColon(text: string): number {
   return text.length;
 }
 
-function isQuoteChar(c: string | undefined): boolean {
-  return c === '"' || c === "'";
-}
 
 /** The text without one quote at each end; unchanged unless it has both. */
 function unquote(s: string): string {
-  return s.length >= 2 && isQuoteChar(s[0]) && isQuoteChar(s[s.length - 1]) ? s.slice(1, -1) : s;
+  return s.length >= 2 && isQuote(s[0]!) && isQuote(s[s.length - 1]!) ? s.slice(1, -1) : s;
 }
 
 function stepKeys(steps: readonly Step[]): (string | undefined)[] {
@@ -991,8 +970,8 @@ function selectorType(options: string): string | undefined {
   for (const o of options.split(",")) {
     const eq = o.indexOf("=");
     if (eq < 0) continue;
-    const v = trim(o.slice(eq + 1));
-    if (trim(o.slice(0, eq)) === "type" && !v.startsWith("!") && !v.startsWith("#")) return fullId(v);
+    const v = trimWhiteSpace(o.slice(eq + 1));
+    if (trimWhiteSpace(o.slice(0, eq)) === "type" && !v.startsWith("!") && !v.startsWith("#")) return fullId(v);
   }
   return undefined;
 }

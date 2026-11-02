@@ -150,7 +150,7 @@ test("completion_follows_the_release_of_the_project", { timeout: 600_000 }, asyn
   assert.ok(has(slots, "mob.inventory."), JSON.stringify(slots));
 });
 
-// The tests below have no Rust counterpart. They run what the editor test (`editors/vscode/test`)
+// The tests below run what the editor test (`editors/vscode/test`)
 // runs, through the worker that gives the server its stack.
 
 interface Published {
