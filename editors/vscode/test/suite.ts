@@ -44,6 +44,9 @@ export async function run(): Promise<void> {
   const targets = definitions.map((d) => path.basename(("targetUri" in d ? d.targetUri : d.uri).fsPath));
   console.log(`definition: ${targets.join(", ")}`);
   assert.ok(targets.includes("lib.mcfunction"), "the definition of t:lib is its file");
+  const origins = definitions.flatMap((d) => ("originSelectionRange" in d && d.originSelectionRange ? [doc.getText(d.originSelectionRange)] : []));
+  console.log(`definition starts from: ${origins.join(", ")}`);
+  assert.deepStrictEqual(origins, ["t:lib"], "the link of the definition covers the whole id");
 
   const end = doc.lineAt(doc.lineCount - 1).range.end;
   await editor.edit((e) => e.insert(end, "\nfunction t:"));

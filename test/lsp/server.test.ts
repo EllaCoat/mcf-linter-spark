@@ -219,6 +219,66 @@ test("an_edit_reaches_the_diagnostics_and_the_server_exits_with_0_after_shutdown
   }
 });
 
+test("the_definition_of_a_client_with_link_support_starts_from_the_whole_id", { timeout: 120_000 }, async () => {
+  const root = projectRoot("lsp-definition-link");
+  const text = "function t:lib/say/hello\n";
+  writeFiles(root, [
+    ["pack.mcmeta", '{"pack": {"pack_format": 26, "description": "t"}}'],
+    [join(".vscode", "settings.json"), '{"datapack.env.cmdVersion": "1.21"}'],
+    [join("data", "t", "function", "main.mcfunction"), text],
+    [join("data", "t", "function", "lib", "say", "hello.mcfunction"), "#> t:lib/say/hello\n# @public\n\nsay hello\n"],
+  ]);
+  const main = pathToFileURL(join(root, "data", "t", "function", "main.mcfunction")).href;
+  const client = startServer();
+  try {
+    await client.start(root, undefined, { textDocument: { definition: { linkSupport: true } } });
+    client.notify("textDocument/didOpen", { textDocument: { uri: main, languageId: "mcfunction", version: 1, text } });
+    const origins: unknown[] = [];
+    for (const part of ["t", "lib", "say", "hello"]) {
+      const position = { line: 0, character: text.indexOf(part, 9) };
+      const links = (await client.request("textDocument/definition", { textDocument: { uri: main }, position })) as { originSelectionRange: unknown; targetUri: string }[];
+      assert.deepEqual(
+        links.map((l) => l.targetUri.slice(l.targetUri.lastIndexOf("/") + 1)),
+        ["hello.mcfunction"],
+      );
+      origins.push(links[0]!.originSelectionRange);
+    }
+    const whole = { start: { line: 0, character: 9 }, end: { line: 0, character: 24 } };
+    assert.deepEqual(origins, [whole, whole, whole, whole]);
+  } finally {
+    assert.equal(await client.close(), 0);
+  }
+});
+
+test("the_definition_of_a_comment_link_with_a_line_is_that_line", { timeout: 120_000 }, async () => {
+  const root = projectRoot("lsp-definition-comment-link");
+  const text = "# [b](t:b#L2)\nsay a\n";
+  writeFiles(root, [
+    ["pack.mcmeta", '{"pack": {"pack_format": 26, "description": "t"}}'],
+    [join(".vscode", "settings.json"), '{"datapack.env.cmdVersion": "1.21"}'],
+    [join("data", "t", "function", "a.mcfunction"), text],
+    [join("data", "t", "function", "b.mcfunction"), "say 1\nsay 2\n"],
+  ]);
+  const a = pathToFileURL(join(root, "data", "t", "function", "a.mcfunction")).href;
+  const position = { line: 0, character: text.indexOf("t:b#") + 1 };
+  const second = { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } };
+  for (const linkSupport of [false, true]) {
+    const client = startServer();
+    try {
+      await client.start(root, undefined, { textDocument: { definition: { linkSupport } } });
+      client.notify("textDocument/didOpen", { textDocument: { uri: a, languageId: "mcfunction", version: 1, text } });
+      const definition = (await client.request("textDocument/definition", { textDocument: { uri: a }, position })) as Record<string, unknown>[];
+      assert.equal(definition.length, 1);
+      const [d] = definition as [Record<string, unknown>];
+      assert.equal(String(d[linkSupport ? "targetUri" : "uri"]).endsWith("/b.mcfunction"), true);
+      assert.deepEqual(d[linkSupport ? "targetRange" : "range"], second);
+      assert.deepEqual(d["originSelectionRange"], linkSupport ? { start: { line: 0, character: 6 }, end: { line: 0, character: 12 } } : undefined);
+    } finally {
+      assert.equal(await client.close(), 0);
+    }
+  }
+});
+
 test("a_request_the_server_does_not_support_is_refused", { timeout: 120_000 }, async () => {
   const root = projectRoot("lsp-unsupported");
   writeFiles(root, [["pack.mcmeta", "{}"]]);

@@ -395,7 +395,7 @@ test("commands_and_json_ids_are_references_to_functions", async () => {
   assert.equal(p.references(kind.FUNCTION, "t:b").length, 2);
   const json = fidOf(p, "data/t/advancements/x.json");
   const at = p.files[json]!.text.indexOf("t:b");
-  assert.deepEqual(p.symbolAt(json, at + 1), [kind.FUNCTION, "t:b"]);
+  assert.deepEqual(p.symbolAt(json, at + 1), [kind.FUNCTION, "t:b", at, at + 3]);
 });
 
 test("a_missing_optional_function_tag_entry_is_not_reported", async () => {

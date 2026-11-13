@@ -55,12 +55,12 @@ export class LspClient {
   }
 
   /** `initialize` with `root` as the workspace folder, then `initialized`. Returns the response. */
-  async start(root: string, initializationOptions?: Json): Promise<Json> {
+  async start(root: string, initializationOptions?: Json, capabilities: Json = {}): Promise<Json> {
     const uri = pathToFileURL(root).href;
     const result = await this.request("initialize", {
       processId: null,
       rootUri: uri,
-      capabilities: {},
+      capabilities,
       workspaceFolders: [{ uri, name: "t" }],
       initializationOptions,
     });
