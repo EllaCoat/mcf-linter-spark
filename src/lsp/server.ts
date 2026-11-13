@@ -17,6 +17,7 @@ import {
   type InitializeParams,
   type InitializeResult,
   type Location,
+  type LocationLink,
   MessageType,
   type Position,
   ProposedFeatures,
@@ -98,6 +99,7 @@ class Server {
   private ignore: string[] = [];
   /** `maxDepth` of the initialization options; `undefined` uses `defaultMaxDepth`. */
   private maxDepth: number | undefined = undefined;
+  private definitionLinkSupport = false;
   private project: Project | undefined = undefined;
   /** Files that currently show diagnostics in the client. */
   private published = new Set<string>();
@@ -118,6 +120,7 @@ class Server {
       if (Array.isArray(options?.ignore)) this.ignore = options.ignore.filter((s): s is string => typeof s === "string");
       const depth = options?.maxDepth;
       if (typeof depth === "number" && Number.isInteger(depth) && depth >= 0) this.maxDepth = depth;
+      this.definitionLinkSupport = params.capabilities.textDocument?.definition?.linkSupport === true;
       return CAPABILITIES;
     });
     connection.onInitialized(() => {
@@ -416,7 +419,7 @@ class Server {
     };
   }
 
-  private definition(uri: string, pos: Position): Location | Location[] | null {
+  private definition(uri: string, pos: Position): Location[] | LocationLink[] | null {
     const project = this.project;
     if (project === undefined) return null;
     const path = toFilePath(uri);
@@ -424,18 +427,24 @@ class Server {
     if (fid === undefined) return null;
     const f = project.files[fid]!;
     const offset = new LineIndex(f.text).offset(f.text, pos.line, pos.character);
-    const link = project.linkLineAt(fid, offset);
-    if (link !== undefined) {
-      const [file, line] = link;
-      const target = toFileUrl(project.files[file]!.path);
-      if (target === undefined) return null;
-      const at = { line: line - 1, character: 0 };
-      return { uri: target.href, range: { start: at, end: at } };
-    }
     const symbol = project.symbolAt(fid, offset);
     if (symbol === undefined) return null;
-    const locations = project.definitions(symbol[0], symbol[1]).flatMap((s) => location(project, s) ?? []);
-    return locations.length === 0 ? null : locations;
+    const [k, id, start, end] = symbol;
+    const targets = this.definitionTargets(project, fid, offset, k, id);
+    if (targets.length === 0) return null;
+    if (!this.definitionLinkSupport) return targets;
+    const origin = location(project, [fid, start, end])?.range;
+    return targets.map((t) => ({ originSelectionRange: origin, targetUri: t.uri, targetRange: t.range, targetSelectionRange: t.range }));
+  }
+
+  private definitionTargets(project: Project, fid: FileId, offset: number, k: Kind, id: string): Location[] {
+    const link = project.linkLineAt(fid, offset);
+    if (link === undefined) return project.definitions(k, id).flatMap((s) => location(project, s) ?? []);
+    const [file, line] = link;
+    const target = toFileUrl(project.files[file]!.path);
+    if (target === undefined) return [];
+    const at = { line: line - 1, character: 0 };
+    return [{ uri: target.href, range: { start: at, end: at } }];
   }
 
   private references(uri: string, pos: Position, includeDeclaration: boolean): Location[] | null {

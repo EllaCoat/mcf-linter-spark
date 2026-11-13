@@ -363,18 +363,19 @@ export class Project {
     return result.sort(byNumber);
   }
 
-  /** The reference or declaration covering an offset of a file, if any. */
-  symbolAt(fid: FileId, offset: number): [Kind, string] | undefined {
+  /** The reference or declaration covering an offset of a file, if any, with its span. */
+  symbolAt(fid: FileId, offset: number): [Kind, string, number, number] | undefined {
     const f = this.files[fid]!;
     const covers = (r: { start: number; end: number }): boolean => r.start <= offset && offset <= r.end;
-    for (const r of f.facts.refs) if (covers(r)) return [r.kind, r.id];
-    for (const e of f.tagRefs) if (covers(e.target)) return [e.target.kind, e.target.id];
-    for (const r of f.jsonRefs) if (covers(r)) return [r.kind, r.id];
-    for (const l of f.facts.links) if (covers(l.target)) return [l.target.kind, l.target.id];
-    for (const r of f.facts.written) if (covers(r)) return [r.kind, r.id];
-    for (const d of f.facts.decls) if (covers(d)) return [d.kind, d.id];
+    const at = (r: { kind: Kind; id: string; start: number; end: number }): [Kind, string, number, number] => [r.kind, r.id, r.start, r.end];
+    for (const r of f.facts.refs) if (covers(r)) return at(r);
+    for (const e of f.tagRefs) if (covers(e.target)) return at(e.target);
+    for (const r of f.jsonRefs) if (covers(r)) return at(r);
+    for (const l of f.facts.links) if (covers(l.target)) return at(l.target);
+    for (const r of f.facts.written) if (covers(r)) return at(r);
+    for (const d of f.facts.decls) if (covers(d)) return at(d);
     const doc = f.facts.functionDoc;
-    if (doc !== undefined && covers(doc)) return [f.kind, f.id];
+    if (doc !== undefined && covers(doc)) return [f.kind, f.id, doc.start, doc.end];
     return undefined;
   }
 
